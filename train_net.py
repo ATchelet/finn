@@ -22,8 +22,11 @@ GRID_SIZE = torch.tensor([9, 16])
 
 
 class QTinyYOLOv2(Module):
-
-    def __init__(self, n_anchors, weight_bit_width=8, act_bit_width=8, quant_tensor=True):
+    def __init__(self,
+                 n_anchors,
+                 weight_bit_width=8,
+                 act_bit_width=8,
+                 quant_tensor=True):
         super(QTinyYOLOv2, self).__init__()
         self.weight_bit_width = int(np.clip(weight_bit_width, 1, 8))
         self.act_bit_width = int(np.clip(act_bit_width, 1, 8))
@@ -32,76 +35,104 @@ class QTinyYOLOv2(Module):
         self.input = QuantIdentity(
             act_quant=Int8ActPerTensorFloatMinMaxInit,
             min_val=-1.0,
-            max_val=1.0 - 2.0 ** (-7),
+            max_val=1.0 - 2.0**(-7),
             signed=True,
             restrict_scaling_type=RestrictValueType.POWER_OF_TWO,
-            return_quant_tensor=quant_tensor
-        )
+            return_quant_tensor=quant_tensor)
         self.conv1 = Sequential(
-            QuantConv2d(3, 16, 3, 1, (2, 2), bias=False,
-                        weight_bit_width=8, return_quant_tensor=quant_tensor),
-            BatchNorm2d(16),
+            QuantConv2d(3,
+                        16,
+                        3,
+                        1, (2, 2),
+                        bias=False,
+                        weight_bit_width=8,
+                        return_quant_tensor=quant_tensor), BatchNorm2d(16),
             QuantReLU(bit_width=8, return_quant_tensor=quant_tensor),
-            QuantMaxPool2d(2, 2, (1, 1), return_quant_tensor=quant_tensor)
-        )
+            QuantMaxPool2d(2, 2, (1, 1), return_quant_tensor=quant_tensor))
         self.conv2 = Sequential(
-            QuantConv2d(16, 32, 3, 1, (2, 1), bias=False,
-                        weight_bit_width=self.weight_bit_width, return_quant_tensor=quant_tensor),
-            BatchNorm2d(32),
+            QuantConv2d(16,
+                        32,
+                        3,
+                        1, (2, 1),
+                        bias=False,
+                        weight_bit_width=self.weight_bit_width,
+                        return_quant_tensor=quant_tensor), BatchNorm2d(32),
             QuantReLU(bit_width=self.act_bit_width,
                       return_quant_tensor=quant_tensor),
-            QuantMaxPool2d(2, 2, (0, 1), return_quant_tensor=quant_tensor)
-        )
+            QuantMaxPool2d(2, 2, (0, 1), return_quant_tensor=quant_tensor))
         self.conv3 = Sequential(
-            QuantConv2d(32, 64, 3, 1, (1, 1), bias=False,
-                        weight_bit_width=self.weight_bit_width, return_quant_tensor=quant_tensor),
-            BatchNorm2d(64),
+            QuantConv2d(32,
+                        64,
+                        3,
+                        1, (1, 1),
+                        bias=False,
+                        weight_bit_width=self.weight_bit_width,
+                        return_quant_tensor=quant_tensor), BatchNorm2d(64),
             QuantReLU(bit_width=self.act_bit_width,
                       return_quant_tensor=quant_tensor),
-            QuantMaxPool2d(2, 2, (0, 1), return_quant_tensor=quant_tensor)
-        )
+            QuantMaxPool2d(2, 2, (0, 1), return_quant_tensor=quant_tensor))
         self.conv4 = Sequential(
-            QuantConv2d(64, 128, 3, 1, (2, 2), bias=False,
-                        weight_bit_width=self.weight_bit_width, return_quant_tensor=quant_tensor),
-            BatchNorm2d(128),
+            QuantConv2d(64,
+                        128,
+                        3,
+                        1, (2, 2),
+                        bias=False,
+                        weight_bit_width=self.weight_bit_width,
+                        return_quant_tensor=quant_tensor), BatchNorm2d(128),
             QuantReLU(bit_width=self.act_bit_width,
                       return_quant_tensor=quant_tensor),
-            QuantMaxPool2d(2, 2, (0, 0), return_quant_tensor=quant_tensor)
-        )
+            QuantMaxPool2d(2, 2, (0, 0), return_quant_tensor=quant_tensor))
         self.conv5 = Sequential(
-            QuantConv2d(128, 256, 3, 1, (1, 2), bias=False,
-                        weight_bit_width=self.weight_bit_width, return_quant_tensor=quant_tensor),
-            BatchNorm2d(256),
+            QuantConv2d(128,
+                        256,
+                        3,
+                        1, (1, 2),
+                        bias=False,
+                        weight_bit_width=self.weight_bit_width,
+                        return_quant_tensor=quant_tensor), BatchNorm2d(256),
             QuantReLU(bit_width=self.act_bit_width,
                       return_quant_tensor=quant_tensor),
-            QuantMaxPool2d(2, 2, (0, 0), return_quant_tensor=quant_tensor)
-        )
+            QuantMaxPool2d(2, 2, (0, 0), return_quant_tensor=quant_tensor))
         self.conv6 = Sequential(
-            QuantConv2d(256, 512, 3, 1, (2, 2), bias=False,
-                        weight_bit_width=self.weight_bit_width, return_quant_tensor=quant_tensor),
-            BatchNorm2d(512),
+            QuantConv2d(256,
+                        512,
+                        3,
+                        1, (2, 2),
+                        bias=False,
+                        weight_bit_width=self.weight_bit_width,
+                        return_quant_tensor=quant_tensor), BatchNorm2d(512),
             QuantReLU(bit_width=self.act_bit_width,
                       return_quant_tensor=quant_tensor),
-            QuantMaxPool2d(2, 2, (0, 0), return_quant_tensor=quant_tensor)
-        )
+            QuantMaxPool2d(2, 2, (0, 0), return_quant_tensor=quant_tensor))
         self.conv7 = Sequential(
-            QuantConv2d(512, 512, 3, 1, (2, 2), bias=False,
-                        weight_bit_width=self.weight_bit_width, return_quant_tensor=quant_tensor),
-            BatchNorm2d(512),
+            QuantConv2d(512,
+                        512,
+                        3,
+                        1, (2, 2),
+                        bias=False,
+                        weight_bit_width=self.weight_bit_width,
+                        return_quant_tensor=quant_tensor), BatchNorm2d(512),
             QuantReLU(bit_width=self.act_bit_width,
-                      return_quant_tensor=quant_tensor)
-        )
+                      return_quant_tensor=quant_tensor))
         self.conv8 = Sequential(
-            QuantConv2d(512, 512, 3, 1, (1, 2), bias=False,
-                        weight_bit_width=self.weight_bit_width, return_quant_tensor=quant_tensor),
-            BatchNorm2d(512),
+            QuantConv2d(512,
+                        512,
+                        3,
+                        1, (1, 2),
+                        bias=False,
+                        weight_bit_width=self.weight_bit_width,
+                        return_quant_tensor=quant_tensor), BatchNorm2d(512),
             QuantReLU(bit_width=self.act_bit_width,
-                      return_quant_tensor=quant_tensor)
-        )
-        self.conv9 = QuantConv2d(512, self.n_anchors*O_SIZE, 1, 1, 0, bias=False, weight_bit_width=8, return_quant_tensor=quant_tensor
-                                 )
-        self.sig = QuantSigmoid(bit_width=8, return_quant_tensor=quant_tensor
-                                )
+                      return_quant_tensor=quant_tensor))
+        self.conv9 = QuantConv2d(512,
+                                 self.n_anchors * O_SIZE,
+                                 1,
+                                 1,
+                                 0,
+                                 bias=False,
+                                 weight_bit_width=8,
+                                 return_quant_tensor=quant_tensor)
+        self.sig = QuantSigmoid(bit_width=8, return_quant_tensor=quant_tensor)
 
     def forward(self, x):
         x = self.input(x)
@@ -171,15 +202,20 @@ class Normalize(object):
 def getAnchors(dataset, n_anchors, device):
     datapoints = False
     # collect labels data
-    for (_, label) in tqdm(dataset, total=len(dataset), desc="kmeans - data read", unit="batch"):
+    for (_, label) in tqdm(dataset,
+                           total=len(dataset),
+                           desc="kmeans - data read",
+                           unit="batch"):
         data = label[:, 2:]
         if torch.is_tensor(datapoints):
             datapoints = torch.vstack([datapoints, data])
         else:
             datapoints = data
     # k-means clustering
-    kmean_idx, anchors = kmeans(
-        X=datapoints, num_clusters=n_anchors, distance='euclidean', device=device)
+    kmean_idx, anchors = kmeans(X=datapoints,
+                                num_clusters=n_anchors,
+                                distance='euclidean',
+                                device=device)
     print(f"Anchors for k={n_anchors}:")
     [print(anchor) for anchor in anchors]
     return anchors
@@ -187,9 +223,11 @@ def getAnchors(dataset, n_anchors, device):
 
 def YOLOout(output, anchors, device):
     gx = (((torch.arange(GRID_SIZE[1]).repeat_interleave(
-        GRID_SIZE[0]*anchors.size(0))) / GRID_SIZE[1]).view(GRID_SIZE.prod(), anchors.size(0))).to(device)
+        GRID_SIZE[0] * anchors.size(0))) / GRID_SIZE[1]).view(
+            GRID_SIZE.prod(), anchors.size(0))).to(device)
     gy = (((torch.arange(GRID_SIZE[0]).repeat(GRID_SIZE[1])).repeat_interleave(
-        anchors.size(0)) / GRID_SIZE[0]).view(GRID_SIZE.prod(), anchors.size(0))).to(device)
+        anchors.size(0)) / GRID_SIZE[0]).view(GRID_SIZE.prod(),
+                                              anchors.size(0))).to(device)
     output[..., 0] = (torch.sigmoid(output[..., 0]) / GRID_SIZE[0]) + gx
     output[..., 1] = (torch.sigmoid(output[..., 1]) / GRID_SIZE[1]) + gy
     output[..., 2] = torch.exp(output[..., 2]) * anchors[:, 0]
@@ -199,7 +237,13 @@ def YOLOout(output, anchors, device):
 
 
 class YOLOLoss(Module):
-    def __init__(self, anchors, device, l_coor_obj=1.0, l_coor_noobj=1.0, l_conf_obj=1.0, l_conf_noobj=1.0):
+    def __init__(self,
+                 anchors,
+                 device,
+                 l_coor_obj=5.0,
+                 l_coor_noobj=5.0,
+                 l_conf_obj=1.0,
+                 l_conf_noobj=0.5):
         super().__init__()
         self.anchors = anchors.to(device)
         self.device = device
@@ -209,22 +253,26 @@ class YOLOLoss(Module):
         self.l_conf_noobj = l_conf_noobj
         self.mse = MSELoss()
 
-    def forward(self, pred, label):
+    def forward(self, pred_, label):
         # locate bounding box location and
         idx_x = (label[:, 0] * GRID_SIZE[1]).floor()
         idx_y = (label[:, 1] * GRID_SIZE[0]).floor()
         idx = (idx_x * GRID_SIZE[0] + idx_y).type(torch.int64)
         # convert predictions to label style
-        pred = YOLOout(pred, self.anchors, self.device)
+        pred = YOLOout(pred_, self.anchors, self.device)
         # find closest anchor
         anchor_mask = (((label[:, 2:4].unsqueeze(1).repeat(
-            (1, self.anchors.size(0), 1))-self.anchors.unsqueeze(0).repeat((label.size(0), 1, 1))) ** 2.0).sum(2)).argmax(1)
+            (1, self.anchors.size(0), 1)) - self.anchors.unsqueeze(0).repeat(
+                (label.size(0), 1, 1)))**2.0).sum(2)).argmax(1)
         # create anchors grid
         anchors_grid = torch.ones_like(pred[..., :4])
         anchors_grid[..., 0] = ((torch.arange(GRID_SIZE[1]).repeat_interleave(
-            GRID_SIZE[0]*self.anchors.size(0)) + 0.5) / GRID_SIZE[1]).view(GRID_SIZE.prod(), self.anchors.size(0))
-        anchors_grid[..., 1] = (((torch.arange(GRID_SIZE[0]).repeat(GRID_SIZE[1])).repeat_interleave(
-            self.anchors.size(0)) + 0.5) / GRID_SIZE[0]).view(GRID_SIZE.prod(), self.anchors.size(0))
+            GRID_SIZE[0] * self.anchors.size(0)) + 0.5) / GRID_SIZE[1]).view(
+                GRID_SIZE.prod(), self.anchors.size(0))
+        anchors_grid[..., 1] = (((torch.arange(GRID_SIZE[0]).repeat(
+            GRID_SIZE[1])).repeat_interleave(self.anchors.size(0)) + 0.5) /
+                                GRID_SIZE[0]).view(GRID_SIZE.prod(),
+                                                   self.anchors.size(0))
         anchors_grid[..., 2:4] = self.anchors
         # mask of obj and noobj
         obj_mask = (torch.zeros_like(pred)).type(torch.bool)
@@ -236,54 +284,67 @@ class YOLOLoss(Module):
         pred_noobj = pred[noobj_mask].view(pred.shape[0], -1, 5)
         anchors_grid = anchors_grid[noobj_mask[..., :4]].view(
             pred.shape[0], -1, 4)
-        pred_obj = pred_obj.to(device)
-        pred_noobj = pred_noobj.to(device)
-        anchors_grid = anchors_grid.to(device)
+        pred_obj = pred_obj.to(self.device)
+        pred_noobj = pred_noobj.to(self.device)
+        anchors_grid = anchors_grid.to(self.device)
 
         # coordination loss
-        coor_l_obj = self.mse(pred_obj[:, :4], label)
-        coor_l_noobj = self.mse(pred_noobj[..., :4], anchors_grid)
+        # coor_l_obj = self.mse(pred_obj[:, :4], label)
+        # coor_l_noobj = self.mse(pred_noobj[..., :4], anchors_grid)
+        coor_l_obj = self.mse(pred_obj[:, :2], label[:2]) + self.mse(
+            pred_obj[:, 2:4].sqrt(), label[2:].sqrt())
+        coor_l_noobj = 0.0
 
         # confidence loss
-        conf_l_obj = self.mse(pred_obj[:, 4], IoU_calc(
-            pred_obj.unsqueeze(1), label))
-        conf_l_noobj = self.mse(pred_noobj[..., 4], torch.zeros_like(
-            pred_noobj[..., 4], device=device))
-        return coor_l_obj*self.l_coor_obj + coor_l_noobj*self.l_coor_noobj + conf_l_obj*self.l_conf_obj + conf_l_noobj*self.l_conf_noobj
+        # conf_l_obj = self.mse(pred_obj[:, 4],
+        #                       IoU_calc(pred_obj.unsqueeze(1), label))
+        # conf_l_noobj = self.mse(
+        #     pred_noobj[..., 4],
+        #     torch.zeros_like(pred_noobj[..., 4], device=self.device))
+        conf_l_obj = self.mse(
+            pred_obj[:, 4], torch.ones_like(pred_obj[:, 4],
+                                            device=self.device))
+        conf_l_noobj = self.mse(
+            pred_noobj[..., 4],
+            torch.zeros_like(pred_noobj[..., 4], device=self.device))
+
+        return coor_l_obj * self.l_coor_obj + coor_l_noobj * self.l_coor_noobj + conf_l_obj * self.l_conf_obj + conf_l_noobj * self.l_conf_noobj
 
 
 def IoU_calc(pred_, label):
     # localizing most probable bounding box
     bb_idx = torch.argmax(pred_[..., 4].view(pred_.size(0), -1), 1)
-    pred = (pred_.view(pred_.size(0), -1, 5)
-            )[torch.arange(pred_.size(0)), bb_idx]
+    pred = (pred_.view(pred_.size(0), -1, 5))[torch.arange(pred_.size(0)),
+                                              bb_idx]
     # xmin, ymin, xmax, ymax
-    label_bb = torch.stack([torch.max(label[:, 0]-(label[:, 2]/2), torch.tensor(0.0)),
-                            torch.max(label[:, 1]-(label[:, 3]/2),
-                                      torch.tensor(0.0)),
-                            torch.min(label[:, 0]+(label[:, 2]/2),
-                                      torch.tensor(1.0)),
-                            torch.min(label[:, 1]+(label[:, 3]/2), torch.tensor(1.0))], 1)
-    pred_bb = torch.stack([torch.max(pred[:, 0]-(pred[:, 2]/2), torch.tensor(0.0)),
-                           torch.max(pred[:, 1]-(pred[:, 3]/2),
-                                     torch.tensor(0.0)),
-                           torch.min(pred[:, 0]+(pred[:, 2]/2),
-                                     torch.tensor(1.0)),
-                           torch.min(pred[:, 1]+(pred[:, 3]/2), torch.tensor(1.0))], 1)
-    inter_bb = torch.stack([torch.max(label_bb[:, 0], pred_bb[:, 0]),
-                            torch.max(label_bb[:, 1], pred_bb[:, 1]),
-                            torch.min(label_bb[:, 2], pred_bb[:, 2]),
-                            torch.min(label_bb[:, 3], pred_bb[:, 3])], 1)
+    label_bb = torch.stack([
+        torch.max(label[:, 0] - (label[:, 2] / 2), torch.tensor(0.0)),
+        torch.max(label[:, 1] - (label[:, 3] / 2), torch.tensor(0.0)),
+        torch.min(label[:, 0] + (label[:, 2] / 2), torch.tensor(1.0)),
+        torch.min(label[:, 1] + (label[:, 3] / 2), torch.tensor(1.0))
+    ], 1)
+    pred_bb = torch.stack([
+        torch.max(pred[:, 0] - (pred[:, 2] / 2), torch.tensor(0.0)),
+        torch.max(pred[:, 1] - (pred[:, 3] / 2), torch.tensor(0.0)),
+        torch.min(pred[:, 0] + (pred[:, 2] / 2), torch.tensor(1.0)),
+        torch.min(pred[:, 1] + (pred[:, 3] / 2), torch.tensor(1.0))
+    ], 1)
+    inter_bb = torch.stack([
+        torch.max(label_bb[:, 0], pred_bb[:, 0]),
+        torch.max(label_bb[:, 1], pred_bb[:, 1]),
+        torch.min(label_bb[:, 2], pred_bb[:, 2]),
+        torch.min(label_bb[:, 3], pred_bb[:, 3])
+    ], 1)
     # calculate IoU
-    label_area = label_bb[:, 2]*label_bb[:, 3]
-    pred_area = pred_bb[:, 2]*pred_bb[:, 3]
+    label_area = label_bb[:, 2] * label_bb[:, 3]
+    pred_area = pred_bb[:, 2] * pred_bb[:, 3]
     inter_area = torch.max(inter_bb[:, 2]-inter_bb[:, 0], torch.tensor(0.0)) * \
         torch.max(inter_bb[:, 3]-inter_bb[:, 1], torch.tensor(0.0))
     # return IoU
     return inter_area / (label_area + pred_area - inter_area)
 
-# ------------------------------------------------------------------------------------------------------------------------------------------------ #
 
+# ------------------------------------------------------------------------------------------------------------------------------------------------ #
 
 if __name__ == "__main__":
     # asses input args
@@ -294,7 +355,9 @@ if __name__ == "__main__":
     n_anchors = int(sys.argv[5])
     n_epochs = int(sys.argv[6])
     batch_size = int(sys.argv[7])
-    print(f"Trainig W{weight_bit_width}A{act_bit_width} with {n_anchors} anchors for {n_epochs} epochs with batch size {batch_size}")
+    print(
+        f"Trainig W{weight_bit_width}A{act_bit_width} with {n_anchors} anchors for {n_epochs} epochs with batch size {batch_size}"
+    )
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Trainig on: {device}")
@@ -303,17 +366,20 @@ if __name__ == "__main__":
     logger = torch.utils.tensorboard.SummaryWriter()
 
     # dataset
-    transformers = transforms.Compose(
-        [ToTensor(), Normalize()])
+    transformers = transforms.Compose([ToTensor(), Normalize()])
     dataset = YOLO_dataset(img_dir, lbl_dir, transformers)
     data_len = len(dataset)
-    train_len = int(data_len*0.8)
-    test_len = data_len-train_len
+    train_len = int(data_len * 0.8)
+    test_len = data_len - train_len
     train_set, test_set = random_split(dataset, [train_len, test_len])
-    train_loader = DataLoader(train_set, batch_size=batch_size,
-                              shuffle=True, num_workers=4)
-    test_loader = DataLoader(test_set, batch_size=batch_size,
-                             shuffle=True, num_workers=4)
+    train_loader = DataLoader(train_set,
+                              batch_size=batch_size,
+                              shuffle=True,
+                              num_workers=4)
+    test_loader = DataLoader(test_set,
+                             batch_size=batch_size,
+                             shuffle=True,
+                             num_workers=4)
 
     # get anchors
     print("Calculating Anchors")
@@ -331,7 +397,10 @@ if __name__ == "__main__":
         # train + train loss
         train_loss = 0.0
         test_loss = 0.0
-        for i, data in tqdm(enumerate(train_loader, 0), total=len(train_loader), desc="train loss", unit="batch"):
+        for i, data in tqdm(enumerate(train_loader, 0),
+                            total=len(train_loader),
+                            desc="train loss",
+                            unit="batch"):
             # get the inputs; data is a list of [inputs, labels]
             inputs, labels = data[0].to(device), data[1].to(device)
             # zero the parameter gradients
@@ -344,16 +413,19 @@ if __name__ == "__main__":
             train_loss += loss.item()
         # test loss
         with torch.no_grad():
-            for i, data in tqdm(enumerate(test_loader, 0), total=len(test_loader), desc="test loss", unit="batch"):
-                test_images, test_labels = data[0].to(
-                    device), data[1].to(device)
+            for i, data in tqdm(enumerate(test_loader, 0),
+                                total=len(test_loader),
+                                desc="test loss",
+                                unit="batch"):
+                test_images, test_labels = data[0].to(device), data[1].to(
+                    device)
                 test_outputs = net(test_images)
-                t_loss = loss_func(
-                    test_outputs.value.float(), test_labels.float())
+                t_loss = loss_func(test_outputs.value.float(),
+                                   test_labels.float())
                 test_loss += t_loss.item()
         # log loss statistics
-        logger.add_scalar('Loss/train', train_loss/train_len, epoch)
-        logger.add_scalar('Loss/test', test_loss/test_len, epoch)
+        logger.add_scalar('Loss/train', train_loss / train_len, epoch)
+        logger.add_scalar('Loss/test', test_loss / test_len, epoch)
 
         # train accuracy
         with torch.no_grad():
@@ -361,38 +433,44 @@ if __name__ == "__main__":
             train_AP50 = 0.0
             train_AP75 = 0.0
             train_total = 0
-            for data in tqdm(train_loader, total=len(train_loader), desc="train accuracy", unit="batch"):
+            for data in tqdm(train_loader,
+                             total=len(train_loader),
+                             desc="train accuracy",
+                             unit="batch"):
                 images, labels = data[0].to(device), data[1].to(device)
                 outputs = net(images)
-                iou = IoU_calc(
-                    YOLOout(outputs.value, anchors, device), labels)
+                iou = IoU_calc(YOLOout(outputs.value, anchors, device), labels)
                 train_total += labels.size(0)
                 train_miou += iou.sum()
                 train_AP50 += (iou >= .5).sum()
                 train_AP75 += (iou >= .75).sum()
             # log accuracy statistics
-            logger.add_scalar('meanIoU/train', train_miou/train_total, epoch)
-            logger.add_scalar('meanAP50/train', train_AP50/train_total, epoch)
-            logger.add_scalar('meanAP75/train', train_AP75/train_total, epoch)
+            logger.add_scalar('meanIoU/train', train_miou / train_total, epoch)
+            logger.add_scalar('meanAP50/train', train_AP50 / train_total,
+                              epoch)
+            logger.add_scalar('meanAP75/train', train_AP75 / train_total,
+                              epoch)
         # test accuracy
         with torch.no_grad():
             test_miou = 0.0
             test_AP50 = 0.0
             test_AP75 = 0.0
             test_total = 0
-            for data in tqdm(test_loader, total=len(test_loader), desc="test accuracy", unit="batch"):
+            for data in tqdm(test_loader,
+                             total=len(test_loader),
+                             desc="test accuracy",
+                             unit="batch"):
                 images, labels = data[0].to(device), data[1].to(device)
                 outputs = net(images)
-                iou = IoU_calc(
-                    YOLOout(outputs.value, anchors, device), labels)
+                iou = IoU_calc(YOLOout(outputs.value, anchors, device), labels)
                 test_total += labels.size(0)
                 test_miou += iou.sum()
                 test_AP50 += (iou >= .5).sum()
                 test_AP75 += (iou >= .75).sum()
             # log accuracy statistics
-            logger.add_scalar('meanIoU/test', test_miou/test_total, epoch)
-            logger.add_scalar('meanAP50/test', test_AP50/test_total, epoch)
-            logger.add_scalar('meanAP75/test', test_AP75/test_total, epoch)
+            logger.add_scalar('meanIoU/test', test_miou / test_total, epoch)
+            logger.add_scalar('meanAP50/test', test_AP50 / test_total, epoch)
+            logger.add_scalar('meanAP75/test', test_AP75 / test_total, epoch)
 
     # save network
     path = f"./trained_net_W{weight_bit_width}A{act_bit_width}_a{n_anchors}_e{n_epochs}_b{batch_size}.pth"
