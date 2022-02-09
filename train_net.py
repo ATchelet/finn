@@ -11,7 +11,7 @@ import torch
 import torch.utils.tensorboard
 from torchvision import transforms
 from torch.utils.data import Dataset, DataLoader, random_split
-from torch.nn import Module, Sequential, BatchNorm2d, MSELoss
+from torch.nn import Module, Sequential, BatchNorm2d, MSELoss, BCELoss
 from brevitas.nn import QuantIdentity, QuantConv2d, QuantReLU, QuantMaxPool2d, QuantSigmoid
 from brevitas.inject.defaults import *
 from brevitas.core.restrict_val import RestrictValueType
@@ -151,16 +151,21 @@ class QTinyYOLOv2(Module):
 
 
 class YOLO_dataset(Dataset):
-    def __init__(self, img_dir, lbl_dir, transform=None, grid_size=GRID_SIZE):
+    def __init__(self,
+                 img_dir,
+                 lbl_dir,
+                 len_lim=-1,
+                 transform=None,
+                 grid_size=GRID_SIZE):
         self.img_dir = img_dir
-        self.imgs = sorted(os.listdir(self.img_dir))
+        self.imgs = sorted(os.listdir(self.img_dir))[:len_lim]
         self.lbl_dir = lbl_dir
-        self.lbls = sorted(os.listdir(self.lbl_dir))
+        self.lbls = sorted(os.listdir(self.lbl_dir))[:len_lim]
         self.transform = transform
         self.grid_size = grid_size
 
     def __len__(self):
-        return len(os.listdir(self.img_dir))
+        return len(self.imgs)
 
     def __getitem__(self, idx):
         if torch.is_tensor(idx):
@@ -221,7 +226,7 @@ def getAnchors(dataset, n_anchors, device):
     return anchors
 
 
-def YOLOout(output, anchors, device):
+def YOLOout(output, anchors, device, findBB):
     gx = (((torch.arange(GRID_SIZE[1]).repeat_interleave(
         GRID_SIZE[0] * anchors.size(0))) / GRID_SIZE[1]).view(
             GRID_SIZE.prod(), anchors.size(0))).to(device)
@@ -233,6 +238,15 @@ def YOLOout(output, anchors, device):
     output[..., 2] = torch.exp(output[..., 2]) * anchors[:, 0]
     output[..., 3] = torch.exp(output[..., 3]) * anchors[:, 1]
     output[..., 4] = torch.sigmoid(output[..., 4])
+
+    # find the most probable grid and box
+    if findBB:
+        # localizing most probable bounding box
+        bb_conf, bb_idx = torch.max(output[..., -1], -1)
+        g_idx = bb_conf.argmax(-1)
+        output = output[torch.arange(output.size(0)), g_idx,
+                        bb_idx[torch.arange(output.size(0)), g_idx], :4]
+
     return output
 
 
@@ -240,6 +254,7 @@ class YOLOLoss(Module):
     def __init__(self,
                  anchors,
                  device,
+                 loss_fnc='yolo',
                  l_coor_obj=5.0,
                  l_coor_noobj=5.0,
                  l_conf_obj=1.0,
@@ -247,11 +262,13 @@ class YOLOLoss(Module):
         super().__init__()
         self.anchors = anchors.to(device)
         self.device = device
+        self.loss_fnc = loss_fnc
         self.l_coor_obj = l_coor_obj
         self.l_coor_noobj = l_coor_noobj
         self.l_conf_obj = l_conf_obj
         self.l_conf_noobj = l_conf_noobj
         self.mse = MSELoss()
+        self.bce = BCELoss()
 
     def forward(self, pred_, label):
         # locate bounding box location and
@@ -259,7 +276,7 @@ class YOLOLoss(Module):
         idx_y = (label[:, 1] * GRID_SIZE[0]).floor()
         idx = (idx_x * GRID_SIZE[0] + idx_y).type(torch.int64)
         # convert predictions to label style
-        pred = YOLOout(pred_, self.anchors, self.device)
+        pred = YOLOout(pred_, self.anchors, self.device, False)
         # find closest anchor
         anchor_mask = (((label[:, 2:4].unsqueeze(1).repeat(
             (1, self.anchors.size(0), 1)) - self.anchors.unsqueeze(0).repeat(
@@ -288,34 +305,52 @@ class YOLOLoss(Module):
         pred_noobj = pred_noobj.to(self.device)
         anchors_grid = anchors_grid.to(self.device)
 
-        # coordination loss
-        # coor_l_obj = self.mse(pred_obj[:, :4], label)
-        # coor_l_noobj = self.mse(pred_noobj[..., :4], anchors_grid)
-        coor_l_obj = self.mse(pred_obj[:, :2], label[:2]) + self.mse(
-            pred_obj[:, 2:4].sqrt(), label[2:].sqrt())
-        coor_l_noobj = 0.0
+        if self.loss_fnc == 'yolo':
+            # coordination loss
+            coor_l_obj = self.mse(pred_obj[:, :2], label[:, :2]) + self.mse(
+                pred_obj[:, 2:4].sqrt(), label[:, 2:].sqrt())
+            # confidence loss
+            conf_l_obj = self.mse(
+                pred_obj[:, 4],
+                torch.ones_like(pred_obj[:, 4], device=self.device))
+            conf_l_noobj = self.mse(
+                pred_noobj[..., 4],
+                torch.zeros_like(pred_noobj[..., 4], device=self.device))
+            # return loss
+            return coor_l_obj * self.l_coor_obj + conf_l_obj * self.l_conf_obj + conf_l_noobj * self.l_conf_noobj
 
-        # confidence loss
-        # conf_l_obj = self.mse(pred_obj[:, 4],
-        #                       IoU_calc(pred_obj.unsqueeze(1), label))
-        # conf_l_noobj = self.mse(
-        #     pred_noobj[..., 4],
-        #     torch.zeros_like(pred_noobj[..., 4], device=self.device))
-        conf_l_obj = self.mse(
-            pred_obj[:, 4], torch.ones_like(pred_obj[:, 4],
-                                            device=self.device))
-        conf_l_noobj = self.mse(
-            pred_noobj[..., 4],
-            torch.zeros_like(pred_noobj[..., 4], device=self.device))
+        elif self.loss_fnc == 'yolov2':
+            # coordination loss
+            coor_l_obj = self.mse(pred_obj[:, :4], label)
+            coor_l_noobj = self.mse(pred_noobj[..., :4], anchors_grid)
+            # confidence loss
+            conf_l_obj = self.mse(pred_obj[:, 4], IoU_calc(pred_obj, label))
+            conf_l_noobj = self.mse(
+                pred_noobj[..., 4],
+                torch.zeros_like(pred_noobj[..., 4], device=self.device))
+            # return loss
+            return coor_l_obj * self.l_coor_obj + coor_l_noobj * self.l_coor_noobj + conf_l_obj * self.l_conf_obj + conf_l_noobj * self.l_conf_noobj
 
-        return coor_l_obj * self.l_coor_obj + coor_l_noobj * self.l_coor_noobj + conf_l_obj * self.l_conf_obj + conf_l_noobj * self.l_conf_noobj
+        elif self.loss_fnc == 'yolov3':
+            # coordination loss
+            coor_l_obj = self.bce(pred_obj[:, :2], label[:, :2]) + self.mse(
+                pred_obj[:, 2:4], label[:, 2:])
+            # confidence loss
+            conf_l_obj = self.bce(
+                pred_obj[:, 4],
+                torch.ones_like(pred_obj[:, 4], device=self.device))
+            conf_l_noobj = self.bce(
+                pred_noobj[..., 4],
+                torch.zeros_like(pred_noobj[..., 4], device=self.device))
+            # return loss
+            return coor_l_obj * self.l_coor_obj + conf_l_obj * self.l_conf_obj + conf_l_noobj * self.l_conf_noobj
+
+        else:
+            print("Unsupported loss function")
+            exit()
 
 
-def IoU_calc(pred_, label):
-    # localizing most probable bounding box
-    bb_idx = torch.argmax(pred_[..., 4].view(pred_.size(0), -1), 1)
-    pred = (pred_.view(pred_.size(0), -1, 5))[torch.arange(pred_.size(0)),
-                                              bb_idx]
+def IoU_calc(pred, label):
     # xmin, ymin, xmax, ymax
     label_bb = torch.stack([
         torch.max(label[:, 0] - (label[:, 2] / 2), torch.tensor(0.0)),
@@ -336,8 +371,8 @@ def IoU_calc(pred_, label):
         torch.min(label_bb[:, 3], pred_bb[:, 3])
     ], 1)
     # calculate IoU
-    label_area = label_bb[:, 2] * label_bb[:, 3]
-    pred_area = pred_bb[:, 2] * pred_bb[:, 3]
+    label_area = label[:, 2] * label[:, 3]
+    pred_area = pred[:, 2] * pred[:, 3]
     inter_area = torch.max(inter_bb[:, 2]-inter_bb[:, 0], torch.tensor(0.0)) * \
         torch.max(inter_bb[:, 3]-inter_bb[:, 1], torch.tensor(0.0))
     # return IoU
@@ -367,7 +402,7 @@ if __name__ == "__main__":
 
     # dataset
     transformers = transforms.Compose([ToTensor(), Normalize()])
-    dataset = YOLO_dataset(img_dir, lbl_dir, transformers)
+    dataset = YOLO_dataset(img_dir, lbl_dir, transform=transformers)
     data_len = len(dataset)
     train_len = int(data_len * 0.8)
     test_len = data_len - train_len
@@ -439,7 +474,8 @@ if __name__ == "__main__":
                              unit="batch"):
                 images, labels = data[0].to(device), data[1].to(device)
                 outputs = net(images)
-                iou = IoU_calc(YOLOout(outputs.value, anchors, device), labels)
+                iou = IoU_calc(YOLOout(outputs.value, anchors, device, True),
+                               labels)
                 train_total += labels.size(0)
                 train_miou += iou.sum()
                 train_AP50 += (iou >= .5).sum()
@@ -462,7 +498,8 @@ if __name__ == "__main__":
                              unit="batch"):
                 images, labels = data[0].to(device), data[1].to(device)
                 outputs = net(images)
-                iou = IoU_calc(YOLOout(outputs.value, anchors, device), labels)
+                iou = IoU_calc(YOLOout(outputs.value, anchors, device, True),
+                               labels)
                 test_total += labels.size(0)
                 test_miou += iou.sum()
                 test_AP50 += (iou >= .5).sum()

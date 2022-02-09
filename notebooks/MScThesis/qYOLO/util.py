@@ -129,6 +129,7 @@ def IoU_calc(pred_, label):
     return inter_area / (label_area + pred_area - inter_area)
 
 
+# TODO Might need to implement it in C/C++ to add it to the board software implementation
 def YoloOutput(pred, anchors, w=16, h=9):
     n = anchors.shape[0]
     bb_conf, bb_idx = torch.max(pred[..., -1], -1)
