@@ -143,11 +143,11 @@ def train(
             logger.add_scalar('meanAP75/test', test_AP75 / test_total, epoch)
 
     # save network
-    net_path = f"./trained_net_W{weight_bit_width}A{act_bit_width}_a{n_anchors}.pth"
+    net_path = f"./train_out/trained_net_W{weight_bit_width}A{act_bit_width}_a{n_anchors}.pth"
     torch.save(net.state_dict(), net_path)
 
     # save anchors
-    anchors_path = f"./anchors_W{weight_bit_width}A{act_bit_width}_a{n_anchors}.txt"
+    anchors_path = f"./train_out/anchors_W{weight_bit_width}A{act_bit_width}_a{n_anchors}.txt"
     f = open(anchors_path, "a")
     for anchor in range(anchors):
         f.write(f"{anchor[0]}, {anchor[1]}\n")
