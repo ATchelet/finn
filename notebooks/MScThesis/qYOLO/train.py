@@ -20,6 +20,8 @@ def train(
     n_anchors=5,
     n_epochs=100,
     batch_size=32,
+    len_lim=-1,
+    loss_fnc='yolo',
 ):
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -30,7 +32,10 @@ def train(
 
     # dataset
     transformers = transforms.Compose([ToTensor(), Normalize()])
-    dataset = YOLO_dataset(img_dir, lbl_dir, transformers)
+    dataset = YOLO_dataset(img_dir,
+                           lbl_dir,
+                           len_lim=len_lim,
+                           transform=transformers)
     data_len = len(dataset)
     train_len = int(data_len * 0.8)
     test_len = data_len - train_len
@@ -45,16 +50,13 @@ def train(
                              num_workers=4)
 
     # get anchors
-    if torch.is_tensor(anchors):
-        n_anchors = anchors.size(0)
-    else:
-        print("Calculating Anchors")
-        anchors = (getAnchors(train_loader, n_anchors, device)).to(device)
+    print("Calculating Anchors")
+    anchors = (getAnchors(train_loader, n_anchors, device)).to(device)
 
     # network setup
     net = QTinyYOLOv2(n_anchors, weight_bit_width, act_bit_width)
     net = net.to(device)
-    loss_func = YOLOLoss(anchors, device)
+    loss_func = YOLOLoss(anchors, device, loss_fnc=loss_fnc)
     optimizer = torch.optim.Adam(net.parameters(), lr=0.001, weight_decay=1e-4)
 
     # train network
@@ -105,7 +107,8 @@ def train(
                              unit="batch"):
                 images, labels = data[0].to(device), data[1].to(device)
                 outputs = net(images)
-                iou = IoU_calc(YOLOout(outputs.value, anchors, device), labels)
+                iou = IoU_calc(YOLOout(outputs.value, anchors, device, True),
+                               labels)
                 train_total += labels.size(0)
                 train_miou += iou.sum()
                 train_AP50 += (iou >= .5).sum()
@@ -128,7 +131,8 @@ def train(
                              unit="batch"):
                 images, labels = data[0].to(device), data[1].to(device)
                 outputs = net(images)
-                iou = IoU_calc(YOLOout(outputs.value, anchors, device), labels)
+                iou = IoU_calc(YOLOout(outputs.value, anchors, device, True),
+                               labels)
                 test_total += labels.size(0)
                 test_miou += iou.sum()
                 test_AP50 += (iou >= .5).sum()

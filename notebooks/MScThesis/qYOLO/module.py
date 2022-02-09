@@ -145,7 +145,7 @@ class QTinyYOLOv2(Module):
         return x
 
 
-def YOLOout(output, anchors, device):
+def YOLOout(output, anchors, device, findBB):
     gx = (((torch.arange(GRID_SIZE[1]).repeat_interleave(
         GRID_SIZE[0] * anchors.size(0))) / GRID_SIZE[1]).view(
             GRID_SIZE.prod(), anchors.size(0))).to(device)
@@ -157,4 +157,13 @@ def YOLOout(output, anchors, device):
     output[..., 2] = torch.exp(output[..., 2]) * anchors[:, 0]
     output[..., 3] = torch.exp(output[..., 3]) * anchors[:, 1]
     output[..., 4] = torch.sigmoid(output[..., 4])
+
+    # find the most probable grid and box
+    if findBB:
+        # localizing most probable bounding box
+        bb_conf, bb_idx = torch.max(output[..., -1], -1)
+        g_idx = bb_conf.argmax(-1)
+        output = output[torch.arange(output.size(0)), g_idx,
+                        bb_idx[torch.arange(output.size(0)), g_idx], :4]
+
     return output

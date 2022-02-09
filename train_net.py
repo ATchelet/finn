@@ -346,7 +346,7 @@ class YOLOLoss(Module):
             return coor_l_obj * self.l_coor_obj + conf_l_obj * self.l_conf_obj + conf_l_noobj * self.l_conf_noobj
 
         else:
-            print("Unsupported loss function")
+            print("User error: Unsupported loss function")
             exit()
 
 

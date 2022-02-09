@@ -9,16 +9,21 @@ from qYOLO.cfg import *
 
 
 class YOLO_dataset(Dataset):
-    def __init__(self, img_dir, lbl_dir, transform=None, grid_size=GRID_SIZE):
+    def __init__(self,
+                 img_dir,
+                 lbl_dir,
+                 len_lim=-1,
+                 transform=None,
+                 grid_size=GRID_SIZE):
         self.img_dir = img_dir
-        self.imgs = sorted(os.listdir(self.img_dir))
+        self.imgs = sorted(os.listdir(self.img_dir))[:len_lim]
         self.lbl_dir = lbl_dir
-        self.lbls = sorted(os.listdir(self.lbl_dir))
+        self.lbls = sorted(os.listdir(self.lbl_dir))[:len_lim]
         self.transform = transform
         self.grid_size = grid_size
 
     def __len__(self):
-        return len(os.listdir(self.img_dir))
+        return len(self.imgs)
 
     def __getitem__(self, idx):
         if torch.is_tensor(idx):
