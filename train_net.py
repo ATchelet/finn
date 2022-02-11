@@ -96,18 +96,12 @@ class Normalize(object):
 
 class QTinyYOLOv2(Module):
     def __init__(
-        self,
-        n_anchors,
-        weight_bit_width=8,
-        act_bit_width=8,
-        quant_tensor=True,
-        batch_size=1,
+        self, n_anchors, weight_bit_width=8, act_bit_width=8, quant_tensor=True,
     ):
         super(QTinyYOLOv2, self).__init__()
         self.weight_bit_width = int(np.clip(weight_bit_width, 1, 8))
         self.act_bit_width = int(np.clip(act_bit_width, 1, 8))
         self.n_anchors = n_anchors
-        self.batch_size = batch_size
 
         self.input = QuantIdentity(
             act_quant=Int8ActPerTensorFloatMinMaxInit,
@@ -257,14 +251,16 @@ class QTinyYOLOv2(Module):
         x = self.conv7(x)
         x = self.conv8(x)
         x = self.conv9(x)
-        x = x.flatten(-2, -1)
-        x = x.transpose(-2, -1)
-        x = x.view(self.batch_size, GRID_SIZE.prod(), self.n_anchors, O_SIZE)
 
         return x
 
 
 def YOLOout(output, anchors, device, findBB):
+
+    output = output.flatten(-2, -1)
+    output = output.transpose(-2, -1)
+    output = output.view(output.size(0), GRID_SIZE.prod(), anchors.size(0), O_SIZE)
+
     gx = (
         (
             (
