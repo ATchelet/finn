@@ -89,6 +89,8 @@ MANIFEST
 # datasets for testing
 /dataset/
 /data/
+Dataset/
+notebooks/MScThesis/data/*
 *.csv
 
 # Google Drive key for dashboard
@@ -96,3 +98,5 @@ MANIFEST
 
 # generated files as part of end2end notebooks
 *.onnx
+notebooks/runs
+runs
