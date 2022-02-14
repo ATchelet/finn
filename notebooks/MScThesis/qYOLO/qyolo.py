@@ -19,6 +19,10 @@ from brevitas.inject.defaults import *
 from brevitas.core.restrict_val import RestrictValueType
 from tqdm import tqdm, trange
 
+#############################################
+#               Configurations              #
+#############################################
+
 # size of output layer
 O_SIZE = 5  # bb_x, bb_y, bb_w, bb_h, bb_conf
 
@@ -585,6 +589,7 @@ def train(
     print("Training Start")
     for epoch in trange(n_epochs, desc="epoch", unit="epoch"):
         # train + train loss
+        net.train()
         train_loss = 0.0
         test_loss = 0.0
         for i, data in tqdm(
@@ -605,6 +610,7 @@ def train(
             train_loss += loss.item()
             scheduler.step(loss)
         # test loss
+        net.eval()
         with torch.no_grad():
             for i, data in tqdm(
                 enumerate(test_loader, 0),
