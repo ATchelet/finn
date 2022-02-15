@@ -27,6 +27,7 @@ from brevitas.nn import (
 )
 from brevitas.inject.defaults import *
 from brevitas.core.restrict_val import RestrictValueType
+from brevitas.onnx import export_brevitas_onnx as exportONNX
 
 # ------------------------------------------------------------------------------------------------------------------------------------------------ #
 
@@ -39,8 +40,10 @@ from brevitas.core.restrict_val import RestrictValueType
 O_SIZE = 5  # bb_x, bb_y, bb_w, bb_h, bb_conf
 
 # bounding boxes grid output shape
-GRID_SIZE = torch.tensor([9, 16])  # (y, x)
+GRID_SIZE = torch.tensor([20, 20])  # (y, x)
 
+# Flag to use QuantTensor or not
+QUANT_TENSOR = True
 
 #############################################
 #               Dataset                     #
@@ -99,13 +102,37 @@ class Normalize(object):
 
 
 #############################################
+#               Quantizers                  #
+#############################################
+
+from brevitas.inject import ExtendedInjector
+from brevitas.quant.solver import WeightQuantSolver, ActQuantSolver
+from brevitas.core.restrict_val import RestrictValueType
+
+
+class PerTensorFloatScaling(ExtendedInjector):
+    scaling_per_output_channel = False
+    restrict_scaling_type = RestrictValueType.FP
+
+
+class WeightQuant(IntQuant, MaxStatsScaling, PerTensorFloatScaling, WeightQuantSolver):
+    pass
+
+
+class ActQuant(
+    UintQuant, ParamFromRuntimePercentileScaling, PerTensorFloatScaling, ActQuantSolver
+):
+    pass
+
+
+#############################################
 #               Network                     #
 #############################################
 
 
 class QTinyYOLOv2(Module):
     def __init__(
-        self, n_anchors, weight_bit_width=8, act_bit_width=8, quant_tensor=True,
+        self, n_anchors, weight_bit_width=8, act_bit_width=8, quant_tensor=QUANT_TENSOR,
     ):
         super(QTinyYOLOv2, self).__init__()
         self.weight_bit_width = int(np.clip(weight_bit_width, 1, 8))
@@ -122,129 +149,168 @@ class QTinyYOLOv2(Module):
         )
         self.conv1 = Sequential(
             QuantConv2d(
-                3,
-                16,
-                3,
-                1,
-                (2, 2),
+                in_channels=3,
+                out_channels=16,
+                kernel_size=3,
+                stride=1,
+                padding=1,
                 bias=False,
+                weight_quant=WeightQuant,
                 weight_bit_width=8,
                 return_quant_tensor=quant_tensor,
             ),
             BatchNorm2d(16),
-            QuantReLU(bit_width=8, return_quant_tensor=quant_tensor),
-            QuantMaxPool2d(2, 2, (1, 1), return_quant_tensor=quant_tensor),
+            QuantReLU(
+                act_quant=ActQuant, bit_width=8, return_quant_tensor=quant_tensor
+            ),
+            QuantMaxPool2d(2, 2, return_quant_tensor=quant_tensor),
         )
         self.conv2 = Sequential(
             QuantConv2d(
-                16,
-                32,
-                3,
-                1,
-                (2, 1),
+                in_channels=16,
+                out_channels=32,
+                kernel_size=3,
+                stride=1,
+                padding=1,
                 bias=False,
+                weight_quant=WeightQuant,
                 weight_bit_width=self.weight_bit_width,
                 return_quant_tensor=quant_tensor,
             ),
             BatchNorm2d(32),
-            QuantReLU(bit_width=self.act_bit_width, return_quant_tensor=quant_tensor),
-            QuantMaxPool2d(2, 2, (0, 1), return_quant_tensor=quant_tensor),
+            QuantReLU(
+                act_quant=ActQuant,
+                bit_width=self.act_bit_width,
+                return_quant_tensor=quant_tensor,
+            ),
+            QuantMaxPool2d(2, 2, return_quant_tensor=quant_tensor),
         )
         self.conv3 = Sequential(
             QuantConv2d(
-                32,
-                64,
-                3,
-                1,
-                (1, 1),
+                in_channels=32,
+                out_channels=64,
+                kernel_size=3,
+                stride=1,
+                padding=1,
                 bias=False,
+                weight_quant=WeightQuant,
                 weight_bit_width=self.weight_bit_width,
                 return_quant_tensor=quant_tensor,
             ),
             BatchNorm2d(64),
-            QuantReLU(bit_width=self.act_bit_width, return_quant_tensor=quant_tensor),
-            QuantMaxPool2d(2, 2, (0, 1), return_quant_tensor=quant_tensor),
+            QuantReLU(
+                act_quant=ActQuant,
+                bit_width=self.act_bit_width,
+                return_quant_tensor=quant_tensor,
+            ),
+            QuantMaxPool2d(2, 2, return_quant_tensor=quant_tensor),
         )
         self.conv4 = Sequential(
             QuantConv2d(
-                64,
-                128,
-                3,
-                1,
-                (2, 2),
+                in_channels=64,
+                out_channels=128,
+                kernel_size=3,
+                stride=1,
+                padding=1,
                 bias=False,
+                weight_quant=WeightQuant,
                 weight_bit_width=self.weight_bit_width,
                 return_quant_tensor=quant_tensor,
             ),
             BatchNorm2d(128),
-            QuantReLU(bit_width=self.act_bit_width, return_quant_tensor=quant_tensor),
-            QuantMaxPool2d(2, 2, (0, 0), return_quant_tensor=quant_tensor),
+            QuantReLU(
+                act_quant=ActQuant,
+                bit_width=self.act_bit_width,
+                return_quant_tensor=quant_tensor,
+            ),
+            QuantMaxPool2d(2, 2, return_quant_tensor=quant_tensor),
         )
         self.conv5 = Sequential(
             QuantConv2d(
-                128,
-                256,
-                3,
-                1,
-                (1, 2),
+                in_channels=128,
+                out_channels=256,
+                kernel_size=3,
+                stride=1,
+                padding=1,
                 bias=False,
+                weight_quant=WeightQuant,
                 weight_bit_width=self.weight_bit_width,
                 return_quant_tensor=quant_tensor,
             ),
             BatchNorm2d(256),
-            QuantReLU(bit_width=self.act_bit_width, return_quant_tensor=quant_tensor),
-            QuantMaxPool2d(2, 2, (0, 0), return_quant_tensor=quant_tensor),
+            QuantReLU(
+                act_quant=ActQuant,
+                bit_width=self.act_bit_width,
+                return_quant_tensor=quant_tensor,
+            ),
+            QuantMaxPool2d(2, 2, return_quant_tensor=quant_tensor),
         )
         self.conv6 = Sequential(
             QuantConv2d(
-                256,
-                512,
-                3,
-                1,
-                (2, 2),
+                in_channels=256,
+                out_channels=512,
+                kernel_size=3,
+                stride=1,
+                padding=1,
                 bias=False,
+                weight_quant=WeightQuant,
                 weight_bit_width=self.weight_bit_width,
                 return_quant_tensor=quant_tensor,
             ),
             BatchNorm2d(512),
-            QuantReLU(bit_width=self.act_bit_width, return_quant_tensor=quant_tensor),
-            QuantMaxPool2d(2, 2, (0, 0), return_quant_tensor=quant_tensor),
+            QuantReLU(
+                act_quant=ActQuant,
+                bit_width=self.act_bit_width,
+                return_quant_tensor=quant_tensor,
+            ),
+            # QuantMaxPool2d(2, 2, return_quant_tensor=quant_tensor),
         )
         self.conv7 = Sequential(
             QuantConv2d(
-                512,
-                512,
-                3,
-                1,
-                (2, 2),
+                in_channels=512,
+                out_channels=512,
+                kernel_size=3,
+                stride=1,
+                padding=1,
                 bias=False,
+                weight_quant=WeightQuant,
                 weight_bit_width=self.weight_bit_width,
                 return_quant_tensor=quant_tensor,
             ),
             BatchNorm2d(512),
-            QuantReLU(bit_width=self.act_bit_width, return_quant_tensor=quant_tensor),
+            QuantReLU(
+                act_quant=ActQuant,
+                bit_width=self.act_bit_width,
+                return_quant_tensor=quant_tensor,
+            ),
         )
         self.conv8 = Sequential(
             QuantConv2d(
-                512,
-                512,
-                3,
-                1,
-                (1, 2),
+                in_channels=512,
+                out_channels=512,
+                kernel_size=3,
+                stride=1,
+                padding=1,
                 bias=False,
+                weight_quant=WeightQuant,
                 weight_bit_width=self.weight_bit_width,
                 return_quant_tensor=quant_tensor,
             ),
             BatchNorm2d(512),
-            QuantReLU(bit_width=self.act_bit_width, return_quant_tensor=quant_tensor),
+            QuantReLU(
+                act_quant=ActQuant,
+                bit_width=self.act_bit_width,
+                return_quant_tensor=quant_tensor,
+            ),
         )
         self.conv9 = QuantConv2d(
-            512,
-            self.n_anchors * O_SIZE,
-            1,
-            1,
-            0,
+            in_channels=512,
+            out_channels=self.n_anchors * O_SIZE,
+            kernel_size=1,
+            stride=1,
+            padding=0,
             bias=False,
+            weight_quant=WeightQuant,
             weight_bit_width=8,
             return_quant_tensor=quant_tensor,
         )
@@ -587,7 +653,10 @@ def train(
             optimizer.zero_grad()
             # forward + backward + optimize
             outputs = net(inputs)
-            loss = loss_func(outputs.value.float(), labels.float())
+            if QUANT_TENSOR:
+                loss = loss_func(outputs.value.float(), labels.float())
+            else:
+                loss = loss_func(outputs.float(), labels.float())
             loss.backward()
             optimizer.step()
             train_loss += loss.item()
@@ -603,7 +672,10 @@ def train(
             ):
                 test_images, test_labels = data[0].to(device), data[1].to(device)
                 test_outputs = net(test_images)
-                t_loss = loss_func(test_outputs.value.float(), test_labels.float())
+                if QUANT_TENSOR:
+                    t_loss = loss_func(test_outputs.value.float(), test_labels.float())
+                else:
+                    t_loss = loss_func(test_outputs.float(), test_labels.float())
                 test_loss += t_loss.item()
         # log loss statistics
         logger.add_scalar("Loss/train", train_loss / train_len, epoch)
@@ -623,7 +695,12 @@ def train(
             ):
                 images, labels = data[0].to(device), data[1].to(device)
                 outputs = net(images)
-                iou = IoU_calc(YOLOout(outputs.value, anchors, device, True), labels)
+                if QUANT_TENSOR:
+                    iou = IoU_calc(
+                        YOLOout(outputs.value, anchors, device, True), labels
+                    )
+                else:
+                    iou = IoU_calc(YOLOout(outputs, anchors, device, True), labels)
                 train_total += labels.size(0)
                 train_miou += iou.sum()
                 train_AP50 += (iou >= 0.5).sum()
@@ -643,7 +720,12 @@ def train(
             ):
                 images, labels = data[0].to(device), data[1].to(device)
                 outputs = net(images)
-                iou = IoU_calc(YOLOout(outputs.value, anchors, device, True), labels)
+                if QUANT_TENSOR:
+                    iou = IoU_calc(
+                        YOLOout(outputs.value, anchors, device, True), labels
+                    )
+                else:
+                    iou = IoU_calc(YOLOout(outputs, anchors, device, True), labels)
                 test_total += labels.size(0)
                 test_miou += iou.sum()
                 test_AP50 += (iou >= 0.5).sum()
@@ -656,6 +738,13 @@ def train(
     # save network
     os.makedirs("./train_out", exist_ok=True)
 
+    # export network ONNX
+    onnx_path = (
+        f"./train_out/trained_net_W{weight_bit_width}A{act_bit_width}_a{n_anchors}.onnx"
+    )
+    exportONNX(net, (batch_size, 3, 640, 640), onnx_path)
+
+    # save network
     net_path = (
         f"./train_out/trained_net_W{weight_bit_width}A{act_bit_width}_a{n_anchors}.pth"
     )

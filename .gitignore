@@ -90,6 +90,7 @@ MANIFEST
 /dataset/
 /data/
 Dataset/
+Dataset_9_16/
 notebooks/MScThesis/data/*
 *.csv
 
