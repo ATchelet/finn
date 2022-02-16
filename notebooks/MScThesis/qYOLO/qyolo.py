@@ -644,8 +644,10 @@ def train(
     )
 
     # get anchors
+    save_anchors = True
     if torch.is_tensor(anchors):
         n_anchors = anchors.size(0)
+        save_anchors = False
     else:
         print("Calculating Anchors")
         anchors = (getAnchors(train_loader, n_anchors, device)).to(device)
@@ -776,13 +778,14 @@ def train(
     torch.save(net.state_dict(), net_path)
 
     # save anchors
-    anchors_path = (
-        f"./train_out/anchors_W{weight_bit_width}A{act_bit_width}_a{n_anchors}.txt"
-    )
-    f = open(anchors_path, "a")
-    for anchor in anchors:
-        f.write(f"{anchor[0]: .8f}, {anchor[1]: .8f}\n")
-    f.close()
+    if save_anchors:
+        anchors_path = (
+            f"./train_out/anchors_W{weight_bit_width}A{act_bit_width}_a{n_anchors}.txt"
+        )
+        f = open(anchors_path, "a")
+        for anchor in anchors:
+            f.write(f"{anchor[0]: .8f}, {anchor[1]: .8f}\n")
+        f.close()
 
     return [net, n_anchors]
 
