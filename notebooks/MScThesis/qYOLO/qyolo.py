@@ -787,7 +787,7 @@ def train(
             f.write(f"{anchor[0]: .8f}, {anchor[1]: .8f}\n")
         f.close()
 
-    return [net, n_anchors]
+    return [net, anchors]
 
 
 if __name__ == "__main__":
