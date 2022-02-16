@@ -3,7 +3,16 @@ import os
 import numpy as np
 import torch
 import torch.utils.tensorboard
-from torch.nn import Module, Sequential, BatchNorm2d, MSELoss, BCELoss
+from torch.nn import (
+    Module,
+    Sequential,
+    BatchNorm2d,
+    Conv2d,
+    ReLU,
+    MaxPool2d,
+    MSELoss,
+    BCELoss,
+)
 from torch.utils.data import Dataset, DataLoader, random_split
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torchvision import transforms
@@ -303,6 +312,137 @@ class QTinyYOLOv2(Module):
             weight_quant=WeightQuant,
             weight_bit_width=8,
             return_quant_tensor=quant_tensor,
+        )
+
+    def forward(self, x):
+        x = self.input(x)
+        x = self.conv1(x)
+        x = self.conv2(x)
+        x = self.conv3(x)
+        x = self.conv4(x)
+        x = self.conv5(x)
+        x = self.conv6(x)
+        x = self.conv7(x)
+        x = self.conv8(x)
+        x = self.conv9(x)
+
+        return x
+
+
+class TinyYOLOv2(Module):
+    def __init__(self):
+        super(TinyYOLOv2, self).__init__()
+        self.n_anchors = n_anchors
+
+        self.conv1 = Sequential(
+            Conv2d(
+                in_channels=3,
+                out_channels=16,
+                kernel_size=3,
+                stride=1,
+                padding=1,
+                bias=False,
+            ),
+            BatchNorm2d(16),
+            ReLU(),
+            MaxPool2d(2, 2),
+        )
+        self.conv2 = Sequential(
+            Conv2d(
+                in_channels=16,
+                out_channels=32,
+                kernel_size=3,
+                stride=1,
+                padding=1,
+                bias=False,
+            ),
+            BatchNorm2d(32),
+            ReLU(),
+            MaxPool2d(2, 2),
+        )
+        self.conv3 = Sequential(
+            Conv2d(
+                in_channels=32,
+                out_channels=64,
+                kernel_size=3,
+                stride=1,
+                padding=1,
+                bias=False,
+            ),
+            BatchNorm2d(64),
+            ReLU(),
+            MaxPool2d(2, 2),
+        )
+        self.conv4 = Sequential(
+            Conv2d(
+                in_channels=64,
+                out_channels=128,
+                kernel_size=3,
+                stride=1,
+                padding=1,
+                bias=False,
+            ),
+            BatchNorm2d(128),
+            ReLU(),
+            MaxPool2d(2, 2),
+        )
+        self.conv5 = Sequential(
+            Conv2d(
+                in_channels=128,
+                out_channels=256,
+                kernel_size=3,
+                stride=1,
+                padding=1,
+                bias=False,
+            ),
+            BatchNorm2d(256),
+            ReLU(),
+            MaxPool2d(2, 2),
+        )
+        self.conv6 = Sequential(
+            Conv2d(
+                in_channels=256,
+                out_channels=512,
+                kernel_size=3,
+                stride=1,
+                padding=1,
+                bias=False,
+            ),
+            BatchNorm2d(512),
+            ReLU(),
+            # MaxPool2d(2, 2),
+        )
+        self.conv7 = Sequential(
+            Conv2d(
+                in_channels=512,
+                out_channels=512,
+                kernel_size=3,
+                stride=1,
+                padding=1,
+                bias=False,
+            ),
+            BatchNorm2d(512),
+            ReLU(),
+        )
+        self.conv8 = Sequential(
+            Conv2d(
+                in_channels=512,
+                out_channels=512,
+                kernel_size=3,
+                stride=1,
+                padding=1,
+                bias=False,
+            ),
+            BatchNorm2d(512),
+            ReLU(),
+        )
+        self.conv9 = Conv2d(
+            in_channels=512,
+            out_channels=self.n_anchors * O_SIZE,
+            kernel_size=1,
+            stride=1,
+            padding=0,
+            bias=False,
         )
 
     def forward(self, x):
