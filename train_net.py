@@ -11,7 +11,7 @@ from kmeans_pytorch import kmeans
 import torch
 import torch.utils.tensorboard
 from torchvision import transforms
-from torch.utils.data import Dataset, DataLoader, random_split
+from torch.utils.data import Dataset, DataLoader, Subset
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.nn import (
     Module,
@@ -535,6 +535,7 @@ class YOLOLoss(Module):
         self.l_conf_noobj = l_conf_noobj
         self.mse = MSELoss()
         self.bce = BCELoss()
+        self.i = 0
 
     def forward(self, pred_, label):
         global logger
@@ -602,9 +603,10 @@ class YOLOLoss(Module):
                 torch.zeros_like(pred_noobj[..., 4], device=self.device),
             )
             # log loss parts
-            logger.add_scalar("LossParts/coor_l_obj", coor_l_obj)
-            logger.add_scalar("LossParts/conf_l_obj", conf_l_obj)
-            logger.add_scalar("LossParts/conf_l_noobj", conf_l_noobj)
+            logger.add_scalar("LossParts/coor_l_obj", coor_l_obj, self.i)
+            logger.add_scalar("LossParts/conf_l_obj", conf_l_obj, self.i)
+            logger.add_scalar("LossParts/conf_l_noobj", conf_l_noobj, self.i)
+            self.i += 1
             # return loss
             return (
                 coor_l_obj * self.l_coor_obj
@@ -623,10 +625,11 @@ class YOLOLoss(Module):
                 torch.zeros_like(pred_noobj[..., 4], device=self.device),
             )
             # log loss parts
-            logger.add_scalar("LossParts/coor_l_obj", coor_l_obj)
-            logger.add_scalar("LossParts/coor_l_noobj", coor_l_noobj)
-            logger.add_scalar("LossParts/conf_l_obj", conf_l_obj)
-            logger.add_scalar("LossParts/conf_l_noobj", conf_l_noobj)
+            logger.add_scalar("LossParts/coor_l_obj", coor_l_obj, self.i)
+            logger.add_scalar("LossParts/coor_l_noobj", coor_l_noobj, self.i)
+            logger.add_scalar("LossParts/conf_l_obj", conf_l_obj, self.i)
+            logger.add_scalar("LossParts/conf_l_noobj", conf_l_noobj, self.i)
+            self.i += 1
             # return loss
             return (
                 coor_l_obj * self.l_coor_obj
@@ -649,10 +652,11 @@ class YOLOLoss(Module):
                 torch.zeros_like(pred_noobj[..., 4], device=self.device),
             )
             # log loss parts
-            logger.add_scalar("LossParts/coor_l_obj", coor_l_obj)
-            logger.add_scalar("LossParts/coor_l_noobj", coor_l_noobj)
-            logger.add_scalar("LossParts/conf_l_obj", conf_l_obj)
-            logger.add_scalar("LossParts/conf_l_noobj", conf_l_noobj)
+            logger.add_scalar("LossParts/coor_l_obj", coor_l_obj, self.i)
+            logger.add_scalar("LossParts/coor_l_noobj", coor_l_noobj, self.i)
+            logger.add_scalar("LossParts/conf_l_obj", conf_l_obj, self.i)
+            logger.add_scalar("LossParts/conf_l_noobj", conf_l_noobj, self.i)
+            self.i += 1
             # return loss
             return (
                 coor_l_obj * self.l_coor_obj
@@ -740,29 +744,42 @@ def AssessBBDiffs(pred, label):
     return [CentDist, SizeRatio]
 
 
-def plotBB(img, pred, label):
-    out = img.transpose(1, 2, 0)
-    h, w, c = out.shape
-    pred_x = np.max(round((pred[0] - pred[2] / 2) * w), 0.0)
-    pred_y = np.max(round((pred[1] - pred[3] / 2) * h), 0.0)
-    pred_w = round(pred[2] * w)
-    pred_h = round(pred[3] * h)
-    label_x = np.max(round((label[0] - label[2] / 2) * w), 0.0)
-    label_y = np.max(round((label[1] - label[3] / 2) * h), 0.0)
-    label_w = round(label[2] * w)
-    label_h = round(label[3] * h)
-    yellow = np.array((1, 1, -1))
-    red = np.array((1, -1, -1))
-    pred_rr, pred_cc = rectangle_perimeter(
-        (pred_y, pred_x), extent=(pred_h, pred_w), shape=out.shape, clip=True
+def getXYminmax(pred, label, w=640, h=640):
+    pred_ = torch.stack(
+        [
+            (
+                torch.max(pred[..., 0] - (pred[..., 2] / 2), torch.tensor(0.0)) * w
+            ).round(),
+            (
+                torch.max(pred[..., 1] - (pred[..., 3] / 2), torch.tensor(0.0)) * h
+            ).round(),
+            (
+                torch.min(pred[..., 0] + (pred[..., 2] / 2), torch.tensor(1.0)) * w
+            ).round(),
+            (
+                torch.min(pred[..., 1] + (pred[..., 3] / 2), torch.tensor(1.0)) * h
+            ).round(),
+        ],
+        -1,
     )
-    label_rr, label_cc = rectangle_perimeter(
-        (label_y, label_x), extent=(label_h, label_w), shape=out.shape, clip=True
+    label_ = torch.stack(
+        [
+            (
+                torch.max(label[..., 0] - (label[..., 2] / 2), torch.tensor(0.0)) * w
+            ).round(),
+            (
+                torch.max(label[..., 1] - (label[..., 3] / 2), torch.tensor(0.0)) * h
+            ).round(),
+            (
+                torch.min(label[..., 0] + (label[..., 2] / 2), torch.tensor(1.0)) * w
+            ).round(),
+            (
+                torch.min(label[..., 1] + (label[..., 3] / 2), torch.tensor(1.0)) * h
+            ).round(),
+        ],
+        -1,
     )
-    set_color(out, (label_rr, label_cc), yellow)
-    set_color(out, (pred_rr, pred_cc), red)
-    out = out.transpose(2, 0, 1)
-    return out
+    return torch.stack([pred_, label_], 0)
 
 
 #############################################
@@ -797,17 +814,13 @@ def train(
     dataset = YOLO_dataset(img_dir, lbl_dir, len_lim=len_lim, transform=transformers)
     # split dataset to train:valid:test - 60:20:20 ratio
     # [Train - Test - Train - Valid - Train ...]
-    idx = np.arange(len(dataset))
-    test_idx = idx[1::5]
-    valid_idx = idx[3::5]
+    idx = np.arange(len(dataset), dtype=int)
+    test_idx = idx[1::5].tolist()
+    valid_idx = idx[3::5].tolist()
     train_idx = np.delete(idx, np.append(test_idx, valid_idx))
-    test_set = dataset[test_idx]
-    valid_set = dataset[valid_idx]
-    train_set = dataset[train_idx]
-    train_len = len(train_set)
-    valid_len = len(valid_set)
-    test_len = len(test_set)
-    train_set, test_set = random_split(dataset, [train_len, test_len])
+    train_set = Subset(dataset, train_idx)
+    test_set = Subset(dataset, test_idx)
+    valid_set = Subset(dataset, valid_idx)
     train_loader = DataLoader(
         train_set, batch_size=batch_size, shuffle=True, num_workers=4
     )
@@ -863,7 +876,9 @@ def train(
             loss.backward()
             optimizer.step()
             train_loss += loss.item()
-            logger.add_scalar("Loss/train continuous", loss.item())
+            logger.add_scalar(
+                "Loss/train_continuous", loss.item(), i + epoch * len(train_loader)
+            )
             scheduler.step(loss)
         # log loss statistics
         logger.add_scalar("Loss/train", train_loss / len(train_loader), epoch)
@@ -885,7 +900,11 @@ def train(
                 else:
                     t_loss = loss_func(valid_outputs.float(), valid_labels.float())
                 valid_loss += t_loss.item()
-                logger.add_scalar("Loss/train continuous", t_loss.item())
+                logger.add_scalar(
+                    "Loss/valid_continuous",
+                    t_loss.item(),
+                    i + epoch * len(valid_loader),
+                )
         # log loss statistics
         logger.add_scalar("Loss/valid", valid_loss / len(valid_loader), epoch)
 
@@ -918,9 +937,13 @@ def train(
                 train_ctrdist += ctrDist.sum()
                 train_ratio += ratio.sum()
                 # sample images
-                if i % (len(train_loader) // 8) == 0:
-                    outWbb = plotBB(images[0], bb_outputs[0], labels[0])
-                    logger.add_image("TrainingResults", outWbb)
+                if i % (len(train_loader) // 2) == 0:
+                    logger.add_image_with_boxes(
+                        "TrainingResults",
+                        images[0],
+                        getXYminmax(bb_outputs[0], labels[0]),
+                        labels=["prediction", "true"],
+                    )
             # log accuracy statistics
             logger.add_scalar(
                 "TrainingAcc/meanIoU", train_miou / len(train_loader), epoch
@@ -966,9 +989,13 @@ def train(
                 valid_ctrdist += ctrDist.sum()
                 valid_ratio += ratio.sum()
                 # sample images
-                if i % (len(train_loader) // 8) == 0:
-                    outWbb = plotBB(images[0], bb_outputs[0], labels[0])
-                    logger.add_image("ValidationResults", outWbb)
+                if i % (len(valid_loader) // 2) == 0:
+                    logger.add_image_with_boxes(
+                        "ValidationResults",
+                        images[0],
+                        getXYminmax(bb_outputs[0], labels[0]),
+                        labels=["prediction", "true"],
+                    )
             # log accuracy statistics
             logger.add_scalar(
                 "ValidationAcc/meanIoU", valid_miou / len(valid_loader), epoch
