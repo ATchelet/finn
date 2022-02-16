@@ -725,6 +725,17 @@ def IoU_calc(pred, label):
     return inter_area / (label_area + pred_area - inter_area)
 
 
+def AssessBBDiffs(pred, label):
+    # calculate Centres Distance
+    CentDist = (
+        (pred[:, 0] - label[:, 0]) ** 2.0 + (pred[:, 1] - label[:, 1]) ** 2.0
+    ).sqrt()
+    # calculate Size Ratio - pred/true
+    SizeRatio = pred[:, 0:2].prod(-1) / label[:, 0:2].prod(-1)
+    # return Centres Distance, and Size Ratio
+    return [CentDist, SizeRatio]
+
+
 # TODO Might need to implement it in C/C++ to add it to the board software implementation
 def YoloOutput(pred, anchors, w=16, h=9):
     n = anchors.shape[0]
@@ -887,6 +898,8 @@ def train(
             train_miou = 0.0
             train_AP50 = 0.0
             train_AP75 = 0.0
+            train_ctrdist = 0.0
+            train_ratio = 0.0
             train_total = 0
             for data in tqdm(
                 train_loader,
@@ -897,28 +910,40 @@ def train(
                 images, labels = data[0].to(device), data[1].to(device)
                 outputs = net(images)
                 if QUANT_TENSOR:
-                    iou = IoU_calc(
-                        YOLOout(outputs.value, anchors, device, True), labels
-                    )
+                    bb_outputs = YOLOout(outputs.value, anchors, device, True)
                 else:
-                    iou = IoU_calc(YOLOout(outputs, anchors, device, True), labels)
+                    bb_outputs = YOLOout(outputs, anchors, device, True)
+                iou = IoU_calc(bb_outputs, labels)
+                ctrDist, ratio = AssessBBDiffs(bb_outputs, labels)
                 train_total += labels.size(0)
                 train_miou += iou.sum()
                 train_AP50 += (iou >= 0.5).sum()
                 train_AP75 += (iou >= 0.75).sum()
+                train_ctrdist += ctrDist.sum()
+                train_ratio += ratio.sum()
             # log accuracy statistics
-            logger.add_scalar("TrainAcc/meanIoU", train_miou / len(train_loader), epoch)
             logger.add_scalar(
-                "TrainAcc/meanAP50", train_AP50 / len(train_loader), epoch
+                "TrainingAcc/meanIoU", train_miou / len(train_loader), epoch
             )
             logger.add_scalar(
-                "TrainAcc/meanAP75", train_AP75 / len(train_loader), epoch
+                "TrainingAcc/meanAP50", train_AP50 / len(train_loader), epoch
+            )
+            logger.add_scalar(
+                "TrainingAcc/meanAP75", train_AP75 / len(train_loader), epoch
+            )
+            logger.add_scalar(
+                "TrainingAcc/CtrDist", train_ctrdist / len(train_loader), epoch,
+            )
+            logger.add_scalar(
+                "TrainingAcc/SizesRatio", train_ratio / len(train_loader), epoch
             )
         # valid accuracy
         with torch.no_grad():
             valid_miou = 0.0
             valid_AP50 = 0.0
             valid_AP75 = 0.0
+            valid_ctrdist = 0.0
+            valid_ratio = 0.0
             valid_total = 0
             for data in tqdm(
                 valid_loader,
@@ -929,15 +954,17 @@ def train(
                 images, labels = data[0].to(device), data[1].to(device)
                 outputs = net(images)
                 if QUANT_TENSOR:
-                    iou = IoU_calc(
-                        YOLOout(outputs.value, anchors, device, True), labels
-                    )
+                    bb_outputs = YOLOout(outputs.value, anchors, device, True)
                 else:
-                    iou = IoU_calc(YOLOout(outputs, anchors, device, True), labels)
+                    bb_outputs = YOLOout(outputs, anchors, device, True)
+                iou = IoU_calc(bb_outputs, labels)
+                ctrDist, ratio = AssessBBDiffs(bb_outputs, labels)
                 valid_total += labels.size(0)
                 valid_miou += iou.sum()
                 valid_AP50 += (iou >= 0.5).sum()
                 valid_AP75 += (iou >= 0.75).sum()
+                valid_ctrdist += ctrDist.sum()
+                valid_ratio += ratio.sum()
             # log accuracy statistics
             logger.add_scalar(
                 "ValidationAcc/meanIoU", valid_miou / len(valid_loader), epoch
@@ -947,6 +974,12 @@ def train(
             )
             logger.add_scalar(
                 "ValidationAcc/meanAP75", valid_AP75 / len(valid_loader), epoch
+            )
+            logger.add_scalar(
+                "ValidationAcc/CtrDist", valid_ctrdist / len(valid_loader), epoch,
+            )
+            logger.add_scalar(
+                "ValidationAcc/SizesRatio", valid_ratio / len(valid_loader), epoch
             )
 
     # save network
