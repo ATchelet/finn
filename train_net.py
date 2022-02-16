@@ -402,6 +402,7 @@ class YOLOLoss(Module):
         self.bce = BCELoss()
 
     def forward(self, pred_, label):
+        global logger
         # locate bounding box location and
         idx_x = (label[:, 0] * GRID_SIZE[1]).floor()
         idx_y = (label[:, 1] * GRID_SIZE[0]).floor()
@@ -465,6 +466,10 @@ class YOLOLoss(Module):
                 pred_noobj[..., 4],
                 torch.zeros_like(pred_noobj[..., 4], device=self.device),
             )
+            # log loss parts
+            logger.add_scalar("LossParts/coor_l_obj", coor_l_obj)
+            logger.add_scalar("LossParts/conf_l_obj", conf_l_obj)
+            logger.add_scalar("LossParts/conf_l_noobj", conf_l_noobj)
             # return loss
             return (
                 coor_l_obj * self.l_coor_obj
@@ -482,6 +487,11 @@ class YOLOLoss(Module):
                 pred_noobj[..., 4],
                 torch.zeros_like(pred_noobj[..., 4], device=self.device),
             )
+            # log loss parts
+            logger.add_scalar("LossParts/coor_l_obj", coor_l_obj)
+            logger.add_scalar("LossParts/coor_l_noobj", coor_l_noobj)
+            logger.add_scalar("LossParts/conf_l_obj", conf_l_obj)
+            logger.add_scalar("LossParts/conf_l_noobj", conf_l_noobj)
             # return loss
             return (
                 coor_l_obj * self.l_coor_obj
@@ -503,6 +513,11 @@ class YOLOLoss(Module):
                 pred_noobj[..., 4],
                 torch.zeros_like(pred_noobj[..., 4], device=self.device),
             )
+            # log loss parts
+            logger.add_scalar("LossParts/coor_l_obj", coor_l_obj)
+            logger.add_scalar("LossParts/coor_l_noobj", coor_l_noobj)
+            logger.add_scalar("LossParts/conf_l_obj", conf_l_obj)
+            logger.add_scalar("LossParts/conf_l_noobj", conf_l_noobj)
             # return loss
             return (
                 coor_l_obj * self.l_coor_obj
@@ -677,7 +692,10 @@ def train(
             loss.backward()
             optimizer.step()
             train_loss += loss.item()
+            logger.add_scalar("Loss/train continuous", loss.item())
             scheduler.step(loss)
+        # log loss statistics
+        logger.add_scalar("Loss/train", train_loss / len(train_loader), epoch)
         # valid loss
         net.eval()
         with torch.no_grad():
@@ -696,9 +714,9 @@ def train(
                 else:
                     t_loss = loss_func(valid_outputs.float(), valid_labels.float())
                 valid_loss += t_loss.item()
+                logger.add_scalar("Loss/train continuous", t_loss.item())
         # log loss statistics
-        logger.add_scalar("Loss/train", train_loss / train_len, epoch)
-        logger.add_scalar("Loss/valid", valid_loss / valid_len, epoch)
+        logger.add_scalar("Loss/valid", valid_loss / len(valid_loader), epoch)
 
         # train accuracy
         with torch.no_grad():
@@ -725,9 +743,13 @@ def train(
                 train_AP50 += (iou >= 0.5).sum()
                 train_AP75 += (iou >= 0.75).sum()
             # log accuracy statistics
-            logger.add_scalar("meanIoU/train", train_miou / train_total, epoch)
-            logger.add_scalar("meanAP50/train", train_AP50 / train_total, epoch)
-            logger.add_scalar("meanAP75/train", train_AP75 / train_total, epoch)
+            logger.add_scalar("TrainAcc/meanIoU", train_miou / len(train_loader), epoch)
+            logger.add_scalar(
+                "TrainAcc/meanAP50", train_AP50 / len(train_loader), epoch
+            )
+            logger.add_scalar(
+                "TrainAcc/meanAP75", train_AP75 / len(train_loader), epoch
+            )
         # valid accuracy
         with torch.no_grad():
             valid_miou = 0.0
@@ -753,9 +775,15 @@ def train(
                 valid_AP50 += (iou >= 0.5).sum()
                 valid_AP75 += (iou >= 0.75).sum()
             # log accuracy statistics
-            logger.add_scalar("meanIoU/validation", valid_miou / valid_total, epoch)
-            logger.add_scalar("meanAP50/validation", valid_AP50 / valid_total, epoch)
-            logger.add_scalar("meanAP75/validation", valid_AP75 / valid_total, epoch)
+            logger.add_scalar(
+                "ValidationAcc/meanIoU", valid_miou / len(valid_loader), epoch
+            )
+            logger.add_scalar(
+                "ValidationAcc/meanAP50", valid_AP50 / len(valid_loader), epoch
+            )
+            logger.add_scalar(
+                "ValidationAcc/meanAP75", valid_AP75 / len(valid_loader), epoch
+            )
 
     # save network
     os.makedirs("./train_out", exist_ok=True)
