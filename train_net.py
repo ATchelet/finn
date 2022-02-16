@@ -601,6 +601,7 @@ def train(
     print(f"Trainig on: {device}")
 
     # logger
+    global logger
     logger = torch.utils.tensorboard.SummaryWriter(
         comment=f"W{weight_bit_width}A{act_bit_width}a{n_anchors}"
     )
@@ -608,12 +609,24 @@ def train(
     # dataset
     transformers = transforms.Compose([ToTensor(), Normalize()])
     dataset = YOLO_dataset(img_dir, lbl_dir, len_lim=len_lim, transform=transformers)
-    data_len = len(dataset)
-    train_len = int(data_len * 0.8)
-    test_len = data_len - train_len
+    # split dataset to train:valid:test - 60:20:20 ratio
+    # [Train - Test - Train - Valid - Train ...]
+    idx = np.arange(len(dataset))
+    test_idx = idx[1::5]
+    valid_idx = idx[3::5]
+    train_idx = np.delete(idx, np.append(test_idx, valid_idx))
+    test_set = dataset[test_idx]
+    valid_set = dataset[valid_idx]
+    train_set = dataset[train_idx]
+    train_len = len(train_set)
+    valid_len = len(valid_set)
+    test_len = len(test_set)
     train_set, test_set = random_split(dataset, [train_len, test_len])
     train_loader = DataLoader(
         train_set, batch_size=batch_size, shuffle=True, num_workers=4
+    )
+    valid_loader = DataLoader(
+        valid_set, batch_size=batch_size, shuffle=True, num_workers=4
     )
     test_loader = DataLoader(
         test_set, batch_size=batch_size, shuffle=True, num_workers=4
@@ -644,7 +657,7 @@ def train(
         # train + train loss
         net.train()
         train_loss = 0.0
-        test_loss = 0.0
+        valid_loss = 0.0
         for i, data in tqdm(
             enumerate(train_loader, 0),
             total=len(train_loader),
@@ -665,25 +678,27 @@ def train(
             optimizer.step()
             train_loss += loss.item()
             scheduler.step(loss)
-        # test loss
+        # valid loss
         net.eval()
         with torch.no_grad():
             for i, data in tqdm(
-                enumerate(test_loader, 0),
-                total=len(test_loader),
-                desc="test loss",
+                enumerate(valid_loader, 0),
+                total=len(valid_loader),
+                desc="valid loss",
                 unit="batch",
             ):
-                test_images, test_labels = data[0].to(device), data[1].to(device)
-                test_outputs = net(test_images)
+                valid_images, valid_labels = data[0].to(device), data[1].to(device)
+                valid_outputs = net(valid_images)
                 if QUANT_TENSOR:
-                    t_loss = loss_func(test_outputs.value.float(), test_labels.float())
+                    t_loss = loss_func(
+                        valid_outputs.value.float(), valid_labels.float()
+                    )
                 else:
-                    t_loss = loss_func(test_outputs.float(), test_labels.float())
-                test_loss += t_loss.item()
+                    t_loss = loss_func(valid_outputs.float(), valid_labels.float())
+                valid_loss += t_loss.item()
         # log loss statistics
         logger.add_scalar("Loss/train", train_loss / train_len, epoch)
-        logger.add_scalar("Loss/test", test_loss / test_len, epoch)
+        logger.add_scalar("Loss/valid", valid_loss / valid_len, epoch)
 
         # train accuracy
         with torch.no_grad():
@@ -713,14 +728,17 @@ def train(
             logger.add_scalar("meanIoU/train", train_miou / train_total, epoch)
             logger.add_scalar("meanAP50/train", train_AP50 / train_total, epoch)
             logger.add_scalar("meanAP75/train", train_AP75 / train_total, epoch)
-        # test accuracy
+        # valid accuracy
         with torch.no_grad():
-            test_miou = 0.0
-            test_AP50 = 0.0
-            test_AP75 = 0.0
-            test_total = 0
+            valid_miou = 0.0
+            valid_AP50 = 0.0
+            valid_AP75 = 0.0
+            valid_total = 0
             for data in tqdm(
-                test_loader, total=len(test_loader), desc="test accuracy", unit="batch"
+                valid_loader,
+                total=len(valid_loader),
+                desc="valid accuracy",
+                unit="batch",
             ):
                 images, labels = data[0].to(device), data[1].to(device)
                 outputs = net(images)
@@ -730,14 +748,14 @@ def train(
                     )
                 else:
                     iou = IoU_calc(YOLOout(outputs, anchors, device, True), labels)
-                test_total += labels.size(0)
-                test_miou += iou.sum()
-                test_AP50 += (iou >= 0.5).sum()
-                test_AP75 += (iou >= 0.75).sum()
+                valid_total += labels.size(0)
+                valid_miou += iou.sum()
+                valid_AP50 += (iou >= 0.5).sum()
+                valid_AP75 += (iou >= 0.75).sum()
             # log accuracy statistics
-            logger.add_scalar("meanIoU/test", test_miou / test_total, epoch)
-            logger.add_scalar("meanAP50/test", test_AP50 / test_total, epoch)
-            logger.add_scalar("meanAP75/test", test_AP75 / test_total, epoch)
+            logger.add_scalar("meanIoU/validation", valid_miou / valid_total, epoch)
+            logger.add_scalar("meanAP50/validation", valid_AP50 / valid_total, epoch)
+            logger.add_scalar("meanAP75/validation", valid_AP75 / valid_total, epoch)
 
     # save network
     os.makedirs("./train_out", exist_ok=True)
@@ -746,7 +764,7 @@ def train(
     onnx_path = (
         f"./train_out/trained_net_W{weight_bit_width}A{act_bit_width}_a{n_anchors}.onnx"
     )
-    exportONNX(net, (batch_size, 3, 640, 640), onnx_path)
+    exportONNX(net, (1, 3, 640, 640), onnx_path)
 
     # save network
     net_path = (
