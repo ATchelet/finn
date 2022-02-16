@@ -646,6 +646,7 @@ def train(
     # get anchors
     save_anchors = True
     if torch.is_tensor(anchors):
+        anchors = anchors.to(device)
         n_anchors = anchors.size(0)
         save_anchors = False
     else:
