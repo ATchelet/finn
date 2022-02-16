@@ -4,6 +4,7 @@ import sys
 from tqdm import tqdm, trange
 import numpy as np
 from skimage import io
+from skimage.draw import rectangle_perimeter, set_color
 from kmeans_pytorch import kmeans
 
 # Brevitas ad PyTorch libraries
@@ -739,6 +740,31 @@ def AssessBBDiffs(pred, label):
     return [CentDist, SizeRatio]
 
 
+def plotBB(img, pred, label):
+    out = img.transpose(1, 2, 0)
+    h, w, c = out.shape
+    pred_x = np.max(round((pred[0] - pred[2] / 2) * w), 0.0)
+    pred_y = np.max(round((pred[1] - pred[3] / 2) * h), 0.0)
+    pred_w = round(pred[2] * w)
+    pred_h = round(pred[3] * h)
+    label_x = np.max(round((label[0] - label[2] / 2) * w), 0.0)
+    label_y = np.max(round((label[1] - label[3] / 2) * h), 0.0)
+    label_w = round(label[2] * w)
+    label_h = round(label[3] * h)
+    yellow = np.array((1, 1, -1))
+    red = np.array((1, -1, -1))
+    pred_rr, pred_cc = rectangle_perimeter(
+        (pred_y, pred_x), extent=(pred_h, pred_w), shape=out.shape, clip=True
+    )
+    label_rr, label_cc = rectangle_perimeter(
+        (label_y, label_x), extent=(label_h, label_w), shape=out.shape, clip=True
+    )
+    set_color(out, (label_rr, label_cc), yellow)
+    set_color(out, (pred_rr, pred_cc), red)
+    out = out.transpose(2, 0, 1)
+    return out
+
+
 #############################################
 #               Training                    #
 #############################################
@@ -871,8 +897,8 @@ def train(
             train_ctrdist = 0.0
             train_ratio = 0.0
             train_total = 0
-            for data in tqdm(
-                train_loader,
+            for i, data in tqdm(
+                enumerate(train_loader),
                 total=len(train_loader),
                 desc="train accuracy",
                 unit="batch",
@@ -891,6 +917,10 @@ def train(
                 train_AP75 += (iou >= 0.75).sum()
                 train_ctrdist += ctrDist.sum()
                 train_ratio += ratio.sum()
+                # sample images
+                if i % (len(train_loader) // 8) == 0:
+                    outWbb = plotBB(images[0], bb_outputs[0], labels[0])
+                    logger.add_image("TrainingResults", outWbb)
             # log accuracy statistics
             logger.add_scalar(
                 "TrainingAcc/meanIoU", train_miou / len(train_loader), epoch
@@ -915,8 +945,8 @@ def train(
             valid_ctrdist = 0.0
             valid_ratio = 0.0
             valid_total = 0
-            for data in tqdm(
-                valid_loader,
+            for i, data in tqdm(
+                enumerate(valid_loader),
                 total=len(valid_loader),
                 desc="valid accuracy",
                 unit="batch",
@@ -935,6 +965,10 @@ def train(
                 valid_AP75 += (iou >= 0.75).sum()
                 valid_ctrdist += ctrDist.sum()
                 valid_ratio += ratio.sum()
+                # sample images
+                if i % (len(train_loader) // 8) == 0:
+                    outWbb = plotBB(images[0], bb_outputs[0], labels[0])
+                    logger.add_image("ValidationResults", outWbb)
             # log accuracy statistics
             logger.add_scalar(
                 "ValidationAcc/meanIoU", valid_miou / len(valid_loader), epoch
