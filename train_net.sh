@@ -13,6 +13,11 @@ cd /home/atchelet/git/finn_at/finn_at/finn_at
 echo "Start training"
 # train_net.py IMAGES_DIR LABELS_DIR WEIGHT_BIT ACTIVATION_BIT NUM_ANCHORS NUM_EPOCHS BATCH_SIZE
 time python3 ./train_net.py $IMG_DIR $LBL_DIR 8 8 5 100 1
+time python3 ./train_net.py $IMG_DIR $LBL_DIR 4 8 5 100 1
+time python3 ./train_net.py $IMG_DIR $LBL_DIR 4 4 5 100 1
+time python3 ./train_net.py $IMG_DIR $LBL_DIR 2 4 5 100 1
+time python3 ./train_net.py $IMG_DIR $LBL_DIR 3 3 5 100 1
+time python3 ./train_net.py $IMG_DIR $LBL_DIR 1 3 5 100 1
 echo "finished!"
 
 end_date=$(date)

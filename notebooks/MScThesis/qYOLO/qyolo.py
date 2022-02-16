@@ -19,9 +19,9 @@ from brevitas.inject.defaults import *
 from brevitas.core.restrict_val import RestrictValueType
 from tqdm import tqdm, trange
 
-# from brevitas.onnx import export_finn_onnx as exportONNX
+from brevitas.onnx import export_finn_onnx as exportONNX
 
-from brevitas.onnx import export_brevitas_onnx as exportONNX
+# from brevitas.onnx import export_brevitas_onnx as exportONNX
 
 #############################################
 #               Configurations              #
@@ -98,7 +98,6 @@ class Normalize(object):
 
 from brevitas.inject import ExtendedInjector
 from brevitas.quant.solver import WeightQuantSolver, ActQuantSolver
-from brevitas.core.restrict_val import RestrictValueType
 
 
 class PerTensorFloatScaling(ExtendedInjector):
@@ -617,7 +616,7 @@ def train(
     anchors=False,
     n_anchors=5,
     n_epochs=100,
-    batch_size=32,
+    batch_size=1,
     len_lim=-1,
     loss_fnc="yolo",
 ):
@@ -626,7 +625,9 @@ def train(
     print(f"Trainig on: {device}")
 
     # logger
-    logger = torch.utils.tensorboard.SummaryWriter()
+    logger = torch.utils.tensorboard.SummaryWriter(
+        comment=f"W{weight_bit_width}A{act_bit_width}a{n_anchors}"
+    )
 
     # dataset
     transformers = transforms.Compose([ToTensor(), Normalize()])
@@ -789,8 +790,6 @@ def train(
 if __name__ == "__main__":
     img_dir = "./Dataset/images"
     lbl_dir = "./Dataset/labels"
-    weight_bit_width = 1
-    act_bit_width = 3
     n_anchors = 5
     anchors = torch.tensor(
         [
@@ -804,13 +803,34 @@ if __name__ == "__main__":
     n_epochs = 10
     batch_size = 1
 
-    net, anchors = train(
-        img_dir,
-        lbl_dir,
-        len_lim=500,
-        weight_bit_width=weight_bit_width,
-        act_bit_width=act_bit_width,
-        anchors=anchors,
-        n_epochs=n_epochs,
-        batch_size=batch_size,
-    )
+    for bits in range(3, 9):
+        net, anchors = train(
+            img_dir,
+            lbl_dir,
+            len_lim=500,
+            weight_bit_width=bits - 2,
+            act_bit_width=bits,
+            anchors=anchors,
+            n_epochs=n_epochs,
+            batch_size=batch_size,
+        )
+        net, anchors = train(
+            img_dir,
+            lbl_dir,
+            len_lim=500,
+            weight_bit_width=bits - 1,
+            act_bit_width=bits,
+            anchors=anchors,
+            n_epochs=n_epochs,
+            batch_size=batch_size,
+        )
+        net, anchors = train(
+            img_dir,
+            lbl_dir,
+            len_lim=500,
+            weight_bit_width=bits,
+            act_bit_width=bits,
+            anchors=anchors,
+            n_epochs=n_epochs,
+            batch_size=batch_size,
+        )

@@ -27,7 +27,7 @@ from brevitas.nn import (
 )
 from brevitas.inject.defaults import *
 from brevitas.core.restrict_val import RestrictValueType
-from brevitas.onnx import export_brevitas_onnx as exportONNX
+from brevitas.onnx import export_finn_onnx as exportONNX
 
 # ------------------------------------------------------------------------------------------------------------------------------------------------ #
 
@@ -107,7 +107,6 @@ class Normalize(object):
 
 from brevitas.inject import ExtendedInjector
 from brevitas.quant.solver import WeightQuantSolver, ActQuantSolver
-from brevitas.core.restrict_val import RestrictValueType
 
 
 class PerTensorFloatScaling(ExtendedInjector):
@@ -588,12 +587,12 @@ def IoU_calc(pred, label):
 def train(
     img_dir,
     lbl_dir,
-    weight_bit_width=1,
-    act_bit_width=3,
+    weight_bit_width=8,
+    act_bit_width=8,
     anchors=False,
     n_anchors=5,
     n_epochs=100,
-    batch_size=32,
+    batch_size=1,
     len_lim=-1,
     loss_fnc="yolo",
 ):
@@ -602,7 +601,9 @@ def train(
     print(f"Trainig on: {device}")
 
     # logger
-    logger = torch.utils.tensorboard.SummaryWriter()
+    logger = torch.utils.tensorboard.SummaryWriter(
+        comment=f"W{weight_bit_width}A{act_bit_width}a{n_anchors}"
+    )
 
     # dataset
     transformers = transforms.Compose([ToTensor(), Normalize()])
