@@ -603,10 +603,11 @@ class YOLOLoss(Module):
                 torch.zeros_like(pred_noobj[..., 4], device=self.device),
             )
             # log loss parts
-            logger.add_scalar("LossParts/coor_l_obj", coor_l_obj, self.i)
-            logger.add_scalar("LossParts/conf_l_obj", conf_l_obj, self.i)
-            logger.add_scalar("LossParts/conf_l_noobj", conf_l_noobj, self.i)
-            self.i += 1
+            if self.training:
+                logger.add_scalar("LossParts/coor_l_obj", coor_l_obj, self.i)
+                logger.add_scalar("LossParts/conf_l_obj", conf_l_obj, self.i)
+                logger.add_scalar("LossParts/conf_l_noobj", conf_l_noobj, self.i)
+                self.i += 1
             # return loss
             return (
                 coor_l_obj * self.l_coor_obj
@@ -625,11 +626,12 @@ class YOLOLoss(Module):
                 torch.zeros_like(pred_noobj[..., 4], device=self.device),
             )
             # log loss parts
-            logger.add_scalar("LossParts/coor_l_obj", coor_l_obj, self.i)
-            logger.add_scalar("LossParts/coor_l_noobj", coor_l_noobj, self.i)
-            logger.add_scalar("LossParts/conf_l_obj", conf_l_obj, self.i)
-            logger.add_scalar("LossParts/conf_l_noobj", conf_l_noobj, self.i)
-            self.i += 1
+            if self.training:
+                logger.add_scalar("LossParts/coor_l_obj", coor_l_obj, self.i)
+                logger.add_scalar("LossParts/coor_l_noobj", coor_l_noobj, self.i)
+                logger.add_scalar("LossParts/conf_l_obj", conf_l_obj, self.i)
+                logger.add_scalar("LossParts/conf_l_noobj", conf_l_noobj, self.i)
+                self.i += 1
             # return loss
             return (
                 coor_l_obj * self.l_coor_obj
@@ -652,11 +654,12 @@ class YOLOLoss(Module):
                 torch.zeros_like(pred_noobj[..., 4], device=self.device),
             )
             # log loss parts
-            logger.add_scalar("LossParts/coor_l_obj", coor_l_obj, self.i)
-            logger.add_scalar("LossParts/coor_l_noobj", coor_l_noobj, self.i)
-            logger.add_scalar("LossParts/conf_l_obj", conf_l_obj, self.i)
-            logger.add_scalar("LossParts/conf_l_noobj", conf_l_noobj, self.i)
-            self.i += 1
+            if self.training:
+                logger.add_scalar("LossParts/coor_l_obj", coor_l_obj, self.i)
+                logger.add_scalar("LossParts/coor_l_noobj", coor_l_noobj, self.i)
+                logger.add_scalar("LossParts/conf_l_obj", conf_l_obj, self.i)
+                logger.add_scalar("LossParts/conf_l_noobj", conf_l_noobj, self.i)
+                self.i += 1
             # return loss
             return (
                 coor_l_obj * self.l_coor_obj
@@ -940,7 +943,7 @@ def train(
                 train_ctrdist += ctrDist.sum()
                 train_ratio += ratio.sum()
                 # sample images
-                if i % (len(train_loader) // 2) == 0:
+                if i % (len(train_loader) // 6) == 0:
                     logger.add_image_with_boxes(
                         "TrainingResults",
                         images[0],
@@ -984,7 +987,7 @@ def train(
                 valid_ctrdist += ctrDist.sum()
                 valid_ratio += ratio.sum()
                 # sample images
-                if i % (len(valid_loader) // 2) == 0:
+                if i % (len(valid_loader) // 6) == 0:
                     logger.add_image_with_boxes(
                         "ValidationResults",
                         images[0],
