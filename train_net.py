@@ -334,7 +334,7 @@ class QTinyYOLOv2(Module):
 
 
 class TinyYOLOv2(Module):
-    def __init__(self):
+    def __init__(self, n_anchors):
         super(TinyYOLOv2, self).__init__()
         self.n_anchors = n_anchors
 
@@ -450,7 +450,6 @@ class TinyYOLOv2(Module):
         )
 
     def forward(self, x):
-        x = self.input(x)
         x = self.conv1(x)
         x = self.conv2(x)
         x = self.conv3(x)
@@ -594,6 +593,7 @@ class YOLOLoss(Module):
             coor_l_obj = self.mse(pred_obj[:, :2], label[:, :2]) + self.mse(
                 pred_obj[:, 2:4].sqrt(), label[:, 2:].sqrt()
             )
+            coor_l_noobj = self.mse(pred_noobj[..., :4], anchors_grid)
             # confidence loss
             conf_l_obj = self.mse(
                 pred_obj[:, 4], torch.ones_like(pred_obj[:, 4], device=self.device)
@@ -605,16 +605,17 @@ class YOLOLoss(Module):
             # log loss parts
             if self.training:
                 logger.add_scalar("LossParts/coor_l_obj", coor_l_obj, self.i)
+                logger.add_scalar("LossParts/coor_l_noobj", coor_l_noobj, self.i)
                 logger.add_scalar("LossParts/conf_l_obj", conf_l_obj, self.i)
                 logger.add_scalar("LossParts/conf_l_noobj", conf_l_noobj, self.i)
                 self.i += 1
             # return loss
             return (
                 coor_l_obj * self.l_coor_obj
+                + coor_l_noobj * self.l_coor_noobj
                 + conf_l_obj * self.l_conf_obj
                 + conf_l_noobj * self.l_conf_noobj
             )
-
         elif self.loss_fnc == "yolov2":
             # coordination loss
             coor_l_obj = self.mse(pred_obj[:, :4], label)
@@ -736,10 +737,11 @@ def IoU_calc(pred, label):
     return inter_area / (label_area + pred_area - inter_area)
 
 
-def AssessBBDiffs(pred, label):
+def AssessBBDiffs(pred, label, w=640, h=640):
     # calculate Centres Distance
     CentDist = (
-        (pred[:, 0] - label[:, 0]) ** 2.0 + (pred[:, 1] - label[:, 1]) ** 2.0
+        ((pred[:, 0] - label[:, 0]) * w) ** 2.0
+        + ((pred[:, 1] - label[:, 1]) * h) ** 2.0
     ).sqrt()
     # calculate Size Ratio - pred/true
     SizeRatio = pred[:, 0:2].prod(-1) / label[:, 0:2].prod(-1)
@@ -764,7 +766,7 @@ def getXYminmax(pred, label, w=640, h=640):
             ).round(),
         ],
         -1,
-    )
+    ).view(1, 4)
     label_ = torch.stack(
         [
             (
@@ -781,8 +783,8 @@ def getXYminmax(pred, label, w=640, h=640):
             ).round(),
         ],
         -1,
-    )
-    return torch.stack([pred_, label_], 0)
+    ).view(1, 4)
+    return torch.stack([pred_, label_], 0).view(2, 4)
 
 
 #############################################
@@ -800,8 +802,13 @@ def train(
     n_epochs=100,
     batch_size=1,
     len_lim=-1,
+    img_samples=6,
     loss_fnc="yolo",
+    quantized=True,
 ):
+    if not quantized:
+        global QUANT_TENSOR
+        QUANT_TENSOR = False
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Trainig on: {device}")
@@ -848,13 +855,17 @@ def train(
         anchors = (getAnchors(train_loader, n_anchors, device)).to(device)
 
     # network setup
-    net = QTinyYOLOv2(n_anchors, weight_bit_width, act_bit_width)
+    if quantized:
+        net = QTinyYOLOv2(n_anchors, weight_bit_width, act_bit_width)
+    else:
+        net = TinyYOLOv2(n_anchors)
     net = net.to(device)
     loss_func = YOLOLoss(anchors, device, loss_fnc=loss_fnc)
     optimizer = torch.optim.Adam(net.parameters(), lr=0.001, weight_decay=1e-4)
     scheduler = ReduceLROnPlateau(
-        optimizer, mode="min", factor=0.9, patience=100, threshold=1e-5
+        optimizer, mode="min", factor=0.9, patience=10, threshold=1e-5
     )
+    img_samples = 6
 
     # train network
     print("Training Start")
@@ -906,11 +917,6 @@ def train(
                 else:
                     t_loss = loss_func(valid_outputs.float(), valid_labels.float())
                 valid_loss += t_loss.item()
-                logger.add_scalar(
-                    "Loss/valid_continuous",
-                    t_loss.item(),
-                    i + epoch * len(valid_loader),
-                )
         # log loss statistics
         logger.add_scalar("Loss/valid", valid_loss / len(valid_loader), epoch)
 
@@ -942,14 +948,6 @@ def train(
                 train_AP75 += (iou >= 0.75).sum()
                 train_ctrdist += ctrDist.sum()
                 train_ratio += ratio.sum()
-                # sample images
-                if i % (len(train_loader) // 6) == 0:
-                    logger.add_image_with_boxes(
-                        "TrainingResults",
-                        images[0],
-                        getXYminmax(bb_outputs[0], labels[0]),
-                        labels=["prediction", "true"],
-                    )
             # log accuracy statistics
             logger.add_scalar("TrainingAcc/meanIoU", train_miou / train_len, epoch)
             logger.add_scalar("TrainingAcc/meanAP50", train_AP50 / train_len, epoch)
@@ -986,51 +984,83 @@ def train(
                 valid_AP75 += (iou >= 0.75).sum()
                 valid_ctrdist += ctrDist.sum()
                 valid_ratio += ratio.sum()
-                # sample images
-                if i % (len(valid_loader) // 6) == 0:
-                    logger.add_image_with_boxes(
-                        "ValidationResults",
-                        images[0],
-                        getXYminmax(bb_outputs[0], labels[0]),
-                        labels=["prediction", "true"],
-                    )
             # log accuracy statistics
+            logger.add_scalar("ValidationAcc/meanIoU", valid_miou / valid_len, epoch)
+            logger.add_scalar("ValidationAcc/meanAP50", valid_AP50 / valid_len, epoch)
+            logger.add_scalar("ValidationAcc/meanAP75", valid_AP75 / valid_len, epoch)
             logger.add_scalar(
-                "ValidationAcc/meanIoU", valid_miou / valid_len), epoch
+                "ValidationAcc/CtrDist", valid_ctrdist / valid_len, epoch,
             )
             logger.add_scalar(
-                "ValidationAcc/meanAP50", valid_AP50 / valid_len), epoch
+                "ValidationAcc/SizesRatio", valid_ratio / valid_len, epoch
             )
-            logger.add_scalar(
-                "ValidationAcc/meanAP75", valid_AP75 / valid_len), epoch
+
+        # sample images bb for logger
+        with torch.no_grad():
+            # sample train images
+            train_smp_set = Subset(
+                train_set, np.arange(train_len, step=int(train_len // img_samples))
             )
-            logger.add_scalar(
-                "ValidationAcc/CtrDist", valid_ctrdist / valid_len), epoch,
+            for n, [train_smp_img, train_smp_lbl] in enumerate(train_smp_set):
+                train_smp_img = train_smp_img.unsqueeze(0)
+                train_smp_lbl = train_smp_lbl.unsqueeze(0)
+                train_smp_out = net(train_smp_img)
+                if QUANT_TENSOR:
+                    train_smp_bbout = YOLOout(
+                        train_smp_out.value, anchors, device, True
+                    )
+                else:
+                    train_smp_bbout = YOLOout(train_smp_out, anchors, device, True)
+                logger.add_image_with_boxes(
+                    f"TrainingResults/img_{n}",
+                    (train_smp_img + 1.0) / 2.0,
+                    getXYminmax(train_smp_bbout, train_smp_lbl),
+                    labels=["prediction", "true"],
+                    global_step=epoch,
+                    dataformats="NCHW",
+                )
+            # sample validation images
+            valid_smp_set = Subset(
+                valid_set, np.arange(valid_len, step=int(valid_len // img_samples))
             )
-            logger.add_scalar(
-                "ValidationAcc/SizesRatio", valid_ratio / valid_len), epoch
-            )
+            for n, [valid_smp_img, valid_smp_lbl] in enumerate(valid_smp_set):
+                valid_smp_img = valid_smp_img.unsqueeze(0)
+                valid_smp_lbl = valid_smp_lbl.unsqueeze(0)
+                valid_smp_out = net(valid_smp_img)
+                if QUANT_TENSOR:
+                    valid_smp_bbout = YOLOout(
+                        valid_smp_out.value, anchors, device, True
+                    )
+                else:
+                    valid_smp_bbout = YOLOout(valid_smp_out, anchors, device, True)
+                logger.add_image_with_boxes(
+                    f"ValidationResults/img_{n}",
+                    (valid_smp_img + 1.0) / 2.0,
+                    getXYminmax(valid_smp_bbout, valid_smp_lbl),
+                    labels=["prediction", "true"],
+                    global_step=epoch,
+                    dataformats="NCHW",
+                )
 
     # save network
     os.makedirs("./train_out", exist_ok=True)
 
     # export network ONNX
-    onnx_path = (
-        f"./train_out/trained_net_W{weight_bit_width}A{act_bit_width}_a{n_anchors}.onnx"
-    )
-    exportONNX(net, (1, 3, 640, 640), onnx_path)
+    if quantized:
+        onnx_path = f"./train_out/trained_net_W{weight_bit_width}A{act_bit_width}_a{n_anchors}.onnx"
+        exportONNX(net, (1, 3, 640, 640), onnx_path)
 
     # save network
-    net_path = (
-        f"./train_out/trained_net_W{weight_bit_width}A{act_bit_width}_a{n_anchors}.pth"
-    )
-    torch.save(net.state_dict(), net_path)
+    if quantized:
+        net_path = f"./train_out/trained_net_W{weight_bit_width}A{act_bit_width}_a{n_anchors}.pth"
+        torch.save(net.state_dict(), net_path)
+    else:
+        net_path = f"./train_out/trained_net_pytorch_a{n_anchors}.pth"
+        torch.save(net.state_dict(), net_path)
 
     # save anchors
     if save_anchors:
-        anchors_path = (
-            f"./train_out/anchors_W{weight_bit_width}A{act_bit_width}_a{n_anchors}.txt"
-        )
+        anchors_path = f"./train_out/{n_anchors}_anchors_first_{len(dataset)}.txt"
         f = open(anchors_path, "a")
         for anchor in anchors:
             f.write(f"{anchor[0]: .8f}, {anchor[1]: .8f}\n")
@@ -1061,6 +1091,8 @@ if __name__ == "__main__":
         n_epochs=n_epochs,
         batch_size=batch_size,
         len_lim=-1,
+        img_samples=6,
         loss_fnc="yolo",
+        quantized=True,
     )
 
