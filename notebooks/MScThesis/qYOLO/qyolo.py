@@ -29,9 +29,9 @@ from brevitas.inject.defaults import *
 from brevitas.core.restrict_val import RestrictValueType
 from tqdm import tqdm, trange
 
-from brevitas.onnx import export_finn_onnx as exportONNX
+# from brevitas.onnx import export_finn_onnx as exportONNX
 
-# from brevitas.onnx import export_brevitas_onnx as exportONNX
+from brevitas.onnx import export_brevitas_onnx as exportONNX
 
 #############################################
 #               Configurations              #
@@ -1032,8 +1032,8 @@ def train(
                 train_set, np.arange(train_len, step=int(train_len // img_samples))
             )
             for n, [train_smp_img, train_smp_lbl] in enumerate(train_smp_set):
-                train_smp_img = train_smp_img.unsqueeze(0)
-                train_smp_lbl = train_smp_lbl.unsqueeze(0)
+                train_smp_img = (train_smp_img.unsqueeze(0)).to(device)
+                train_smp_lbl = (train_smp_lbl.unsqueeze(0)).to(device)
                 train_smp_out = net(train_smp_img)
                 if QUANT_TENSOR:
                     train_smp_bbout = YOLOout(
@@ -1054,8 +1054,8 @@ def train(
                 valid_set, np.arange(valid_len, step=int(valid_len // img_samples))
             )
             for n, [valid_smp_img, valid_smp_lbl] in enumerate(valid_smp_set):
-                valid_smp_img = valid_smp_img.unsqueeze(0)
-                valid_smp_lbl = valid_smp_lbl.unsqueeze(0)
+                valid_smp_img = (valid_smp_img.unsqueeze(0)).to(device)
+                valid_smp_lbl = (valid_smp_lbl.unsqueeze(0)).to(device)
                 valid_smp_out = net(valid_smp_img)
                 if QUANT_TENSOR:
                     valid_smp_bbout = YOLOout(
@@ -1124,7 +1124,7 @@ if __name__ == "__main__":
         anchors=anchors,
         n_epochs=n_epochs,
         batch_size=batch_size,
-        quantized=False,
+        quantized=True,
     )
 
     # for bits in range(3, 9):
