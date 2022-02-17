@@ -818,9 +818,12 @@ def train(
     test_idx = idx[1::5].tolist()
     valid_idx = idx[3::5].tolist()
     train_idx = np.delete(idx, np.append(test_idx, valid_idx))
+    train_len = len(train_idx)
+    valid_len = len(valid_idx)
+    test_len = len(test_idx)
     train_set = Subset(dataset, train_idx)
-    test_set = Subset(dataset, test_idx)
     valid_set = Subset(dataset, valid_idx)
+    test_set = Subset(dataset, test_idx)
     train_loader = DataLoader(
         train_set, batch_size=batch_size, shuffle=True, num_workers=4
     )
@@ -945,21 +948,13 @@ def train(
                         labels=["prediction", "true"],
                     )
             # log accuracy statistics
+            logger.add_scalar("TrainingAcc/meanIoU", train_miou / train_len, epoch)
+            logger.add_scalar("TrainingAcc/meanAP50", train_AP50 / train_len, epoch)
+            logger.add_scalar("TrainingAcc/meanAP75", train_AP75 / train_len, epoch)
             logger.add_scalar(
-                "TrainingAcc/meanIoU", train_miou / len(train_loader), epoch
+                "TrainingAcc/CtrDist", train_ctrdist / train_len, epoch,
             )
-            logger.add_scalar(
-                "TrainingAcc/meanAP50", train_AP50 / len(train_loader), epoch
-            )
-            logger.add_scalar(
-                "TrainingAcc/meanAP75", train_AP75 / len(train_loader), epoch
-            )
-            logger.add_scalar(
-                "TrainingAcc/CtrDist", train_ctrdist / len(train_loader), epoch,
-            )
-            logger.add_scalar(
-                "TrainingAcc/SizesRatio", train_ratio / len(train_loader), epoch
-            )
+            logger.add_scalar("TrainingAcc/SizesRatio", train_ratio / train_len, epoch)
         # valid accuracy
         with torch.no_grad():
             valid_miou = 0.0
@@ -998,19 +993,19 @@ def train(
                     )
             # log accuracy statistics
             logger.add_scalar(
-                "ValidationAcc/meanIoU", valid_miou / len(valid_loader), epoch
+                "ValidationAcc/meanIoU", valid_miou / valid_len), epoch
             )
             logger.add_scalar(
-                "ValidationAcc/meanAP50", valid_AP50 / len(valid_loader), epoch
+                "ValidationAcc/meanAP50", valid_AP50 / valid_len), epoch
             )
             logger.add_scalar(
-                "ValidationAcc/meanAP75", valid_AP75 / len(valid_loader), epoch
+                "ValidationAcc/meanAP75", valid_AP75 / valid_len), epoch
             )
             logger.add_scalar(
-                "ValidationAcc/CtrDist", valid_ctrdist / len(valid_loader), epoch,
+                "ValidationAcc/CtrDist", valid_ctrdist / valid_len), epoch,
             )
             logger.add_scalar(
-                "ValidationAcc/SizesRatio", valid_ratio / len(valid_loader), epoch
+                "ValidationAcc/SizesRatio", valid_ratio / valid_len), epoch
             )
 
     # save network
