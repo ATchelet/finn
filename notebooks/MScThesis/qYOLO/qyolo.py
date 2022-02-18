@@ -1,8 +1,16 @@
-# imports
+# general use libraries
 import os
+from tqdm import tqdm, trange
 import numpy as np
-import torch
+from skimage import io
 import torch.utils.tensorboard
+from kmeans_pytorch import kmeans
+
+# Brevitas ad PyTorch libraries
+import torch
+from torch.utils.data import Dataset, DataLoader, Subset
+from torch.optim.lr_scheduler import StepLR
+from torchvision import transforms
 from torch.nn import (
     Module,
     Sequential,
@@ -13,12 +21,6 @@ from torch.nn import (
     MSELoss,
     BCELoss,
 )
-from torch.utils.data import Dataset, DataLoader, Subset
-from torch.optim.lr_scheduler import ReduceLROnPlateau
-from torchvision import transforms
-from skimage import io
-from skimage.draw import rectangle_perimeter, set_color
-from kmeans_pytorch import kmeans
 from brevitas.nn import (
     QuantIdentity,
     QuantConv2d,
@@ -27,11 +29,10 @@ from brevitas.nn import (
 )
 from brevitas.inject.defaults import *
 from brevitas.core.restrict_val import RestrictValueType
-from tqdm import tqdm, trange
+from brevitas.onnx import export_brevitas_onnx as exportONNX
 
 # from brevitas.onnx import export_finn_onnx as exportONNX
 
-from brevitas.onnx import export_brevitas_onnx as exportONNX
 
 #############################################
 #               Configurations              #
@@ -44,7 +45,7 @@ O_SIZE = 5  # bb_x, bb_y, bb_w, bb_h, bb_conf
 GRID_SIZE = torch.tensor([20, 20])  # (y, x)
 
 # Flag to use QuantTensor or not
-QUANT_TENSOR = True
+QUANT_TENSOR = False
 
 #############################################
 #               Dataset                     #
@@ -533,7 +534,7 @@ class YOLOLoss(Module):
         self.bce = BCELoss()
         self.i = 0
 
-    def forward(self, pred_, label):
+    def forward(self, pred_, label, is_training=True):
         global logger
         # locate bounding box location and
         idx_x = (label[:, 0] * GRID_SIZE[1]).floor()
@@ -584,6 +585,7 @@ class YOLOLoss(Module):
         pred_obj = pred_obj.to(self.device)
         pred_noobj = pred_noobj.to(self.device)
         anchors_grid = anchors_grid.to(self.device)
+        iou = IoU_calc(pred_obj, label)
 
         if self.loss_fnc == "yolo":
             # coordination loss
@@ -592,15 +594,16 @@ class YOLOLoss(Module):
             )
             coor_l_noobj = self.mse(pred_noobj[..., :4], anchors_grid)
             # confidence loss
-            conf_l_obj = self.mse(
-                pred_obj[:, 4], torch.ones_like(pred_obj[:, 4], device=self.device)
-            )
+            # conf_l_obj = self.mse(
+            #     pred_obj[:, 4], torch.ones_like(pred_obj[:, 4], device=self.device)
+            # )
+            conf_l_obj = self.mse(pred_obj[:, 4], iou)
             conf_l_noobj = self.mse(
                 pred_noobj[..., 4],
                 torch.zeros_like(pred_noobj[..., 4], device=self.device),
             )
             # log loss parts
-            if self.training:
+            if is_training:
                 logger.add_scalar("LossParts/coor_l_obj", coor_l_obj, self.i)
                 logger.add_scalar("LossParts/coor_l_noobj", coor_l_noobj, self.i)
                 logger.add_scalar("LossParts/conf_l_obj", conf_l_obj, self.i)
@@ -618,13 +621,13 @@ class YOLOLoss(Module):
             coor_l_obj = self.mse(pred_obj[:, :4], label)
             coor_l_noobj = self.mse(pred_noobj[..., :4], anchors_grid)
             # confidence loss
-            conf_l_obj = self.mse(pred_obj[:, 4], IoU_calc(pred_obj, label))
+            conf_l_obj = self.mse(pred_obj[:, 4], iou)
             conf_l_noobj = self.mse(
                 pred_noobj[..., 4],
                 torch.zeros_like(pred_noobj[..., 4], device=self.device),
             )
             # log loss parts
-            if self.training:
+            if is_training:
                 logger.add_scalar("LossParts/coor_l_obj", coor_l_obj, self.i)
                 logger.add_scalar("LossParts/coor_l_noobj", coor_l_noobj, self.i)
                 logger.add_scalar("LossParts/conf_l_obj", conf_l_obj, self.i)
@@ -638,7 +641,7 @@ class YOLOLoss(Module):
                 + conf_l_noobj * self.l_conf_noobj
             )
 
-        elif self.loss_fnc == "yolov3":
+        elif is_training == "yolov3":
             # coordination loss
             coor_l_obj = self.bce(pred_obj[:, :2], label[:, :2]) + self.mse(
                 pred_obj[:, 2:4], label[:, 2:]
@@ -841,7 +844,18 @@ def train(
         QUANT_TENSOR = False
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    if torch.is_tensor(anchors):
+        n_anchors = anchors.size(0)
+
     print(f"Trainig on: {device}")
+    if quantized:
+        print(
+            f"Network Set Up: \n\tQuantized - W{weight_bit_width}A{act_bit_width} with {n_anchors} anchors"
+        )
+    else:
+        print(f"Network Set Up: \n\tPytorch - with {n_anchors} anchors")
+    print(f"\tEpochs: {n_epochs}, Batch size: {batch_size}")
 
     # logger
     global logger
@@ -878,7 +892,6 @@ def train(
     save_anchors = True
     if torch.is_tensor(anchors):
         anchors = anchors.to(device)
-        n_anchors = anchors.size(0)
         save_anchors = False
     else:
         print("Calculating Anchors")
@@ -891,15 +904,17 @@ def train(
         net = TinyYOLOv2(n_anchors)
     net = net.to(device)
     loss_func = YOLOLoss(anchors, device, loss_fnc=loss_fnc)
-    optimizer = torch.optim.Adam(net.parameters(), lr=0.001, weight_decay=1e-4)
-    scheduler = ReduceLROnPlateau(
-        optimizer, mode="min", factor=0.9, patience=10, threshold=1e-5
-    )
-    img_samples = 6
+    optimizer = torch.optim.Adam(net.parameters(), lr=0.005, weight_decay=1e-4)
+    scheduler = StepLR(optimizer, step_size=1, gamma=10 ** -0.1)
 
     # train network
     print("Training Start")
     for epoch in trange(n_epochs, desc="epoch", unit="epoch"):
+        logger.add_scalar(
+            "LossParts/learning_rate",
+            scheduler.get_last_lr()[0],
+            i + epoch * len(train_loader),
+        )
         # train + train loss
         net.train()
         train_loss = 0.0
@@ -926,7 +941,7 @@ def train(
             logger.add_scalar(
                 "Loss/train_continuous", loss.item(), i + epoch * len(train_loader)
             )
-            scheduler.step(loss)
+        scheduler.step()
         # log loss statistics
         logger.add_scalar("Loss/train", train_loss / len(train_loader), epoch)
         # valid loss
@@ -942,10 +957,12 @@ def train(
                 valid_outputs = net(valid_images)
                 if QUANT_TENSOR:
                     t_loss = loss_func(
-                        valid_outputs.value.float(), valid_labels.float()
+                        valid_outputs.value.float(), valid_labels.float(), False
                     )
                 else:
-                    t_loss = loss_func(valid_outputs.float(), valid_labels.float())
+                    t_loss = loss_func(
+                        valid_outputs.float(), valid_labels.float(), False
+                    )
                 valid_loss += t_loss.item()
         # log loss statistics
         logger.add_scalar("Loss/valid", valid_loss / len(valid_loader), epoch)
@@ -1028,9 +1045,11 @@ def train(
         # sample images bb for logger
         with torch.no_grad():
             # sample train images
-            train_smp_set = Subset(
-                train_set, np.arange(train_len, step=int(train_len // img_samples))
-            )
+            if train_len <= img_samples:
+                step = 1
+            else:
+                step = int(train_len / img_samples)
+            train_smp_set = Subset(train_set, np.arange(train_len, step=step))
             for n, [train_smp_img, train_smp_lbl] in enumerate(train_smp_set):
                 train_smp_img = (train_smp_img.unsqueeze(0)).to(device)
                 train_smp_lbl = (train_smp_lbl.unsqueeze(0)).to(device)
@@ -1050,9 +1069,11 @@ def train(
                     dataformats="NCHW",
                 )
             # sample validation images
-            valid_smp_set = Subset(
-                valid_set, np.arange(valid_len, step=int(valid_len // img_samples))
-            )
+            if valid_len <= img_samples:
+                step = 1
+            else:
+                step = int(valid_len / img_samples)
+            valid_smp_set = Subset(valid_set, np.arange(valid_len, step=step))
             for n, [valid_smp_img, valid_smp_lbl] in enumerate(valid_smp_set):
                 valid_smp_img = (valid_smp_img.unsqueeze(0)).to(device)
                 valid_smp_lbl = (valid_smp_lbl.unsqueeze(0)).to(device)
@@ -1077,6 +1098,7 @@ def train(
 
     # export network ONNX
     if quantized:
+        net.eval()
         onnx_path = f"./train_out/trained_net_W{weight_bit_width}A{act_bit_width}_a{n_anchors}.onnx"
         exportONNX(net, (1, 3, 640, 640), onnx_path)
 
@@ -1090,8 +1112,11 @@ def train(
 
     # save anchors
     if save_anchors:
-        anchors_path = f"./train_out/{n_anchors}_anchors_first_{len(dataset)}.txt"
-        f = open(anchors_path, "a")
+        if len_lim == -1:
+            anchors_path = f"./train_out/{n_anchors}.txt"
+        else:
+            anchors_path = f"./train_out/{n_anchors}_anchors_first_{len(dataset)}.txt"
+        f = open(anchors_path, "w")
         for anchor in anchors:
             f.write(f"{anchor[0]: .8f}, {anchor[1]: .8f}\n")
         f.close()
@@ -1100,31 +1125,34 @@ def train(
 
 
 if __name__ == "__main__":
+
     img_dir = "./Dataset/images"
     lbl_dir = "./Dataset/labels"
     n_anchors = 5
     anchors = torch.tensor(
         [
-            [0.0324, 0.0795],
-            [0.1175, 0.4245],
-            [0.0578, 0.1505],
-            [0.0634, 0.2507],
-            [0.1811, 0.2212],
+            [0.09046052, 0.16578947],
+            [0.06190930, 0.11852134],
+            [0.10633224, 0.23462170],
+            [0.07584528, 0.13916497],
+            [0.08820564, 0.20065524],
         ]
     )
-    n_epochs = 10
-    batch_size = 6
+    n_epochs = 20
+    batch_size = 16
 
     net, anchors = train(
         img_dir,
         lbl_dir,
-        len_lim=200,
+        len_lim=100,
         weight_bit_width=8,
         act_bit_width=8,
-        anchors=anchors,
         n_epochs=n_epochs,
+        anchors=anchors,
         batch_size=batch_size,
-        quantized=True,
+        img_samples=10,
+        quantized=False,
+        loss_fnc="yolo",
     )
 
     # for bits in range(3, 9):

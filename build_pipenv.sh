@@ -8,7 +8,7 @@ echo "pip environment activated"
 
 # install needed packages
 pip3 install pip --upgrade
-pip3 install torch==1.10.1+cu113 torchvision==0.11.2+cu113 torchaudio==0.10.1+cu113 -f https://download.pytorch.org/whl/cu113/torch_stable.html
+pip3 install torch==1.7.1+cu110 torchvision==0.8.2+cu110 torchaudio==0.7.2 -f https://download.pytorch.org/whl/torch_stable.html
 pip3 install brevitas
 pip3 install kmeans-pytorch
 pip3 install -U scikit-image
