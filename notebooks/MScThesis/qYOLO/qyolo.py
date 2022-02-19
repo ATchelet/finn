@@ -913,7 +913,7 @@ def train(
         logger.add_scalar(
             "LossParts/learning_rate",
             scheduler.get_last_lr()[0],
-            i + epoch * len(train_loader),
+            epoch * len(train_loader),
         )
         # train + train loss
         net.train()
