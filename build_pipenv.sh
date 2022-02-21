@@ -10,6 +10,8 @@ echo "pip environment activated"
 pip3 install pip --upgrade
 pip3 install torch==1.7.1+cu110 torchvision==0.8.2+cu110 torchaudio==0.7.2 -f https://download.pytorch.org/whl/torch_stable.html
 pip3 install brevitas
+pip3 install onnx
+pip3 install onnxoptimizer
 pip3 install kmeans-pytorch
 pip3 install -U scikit-image
 pip3 install -U scikit-learn
