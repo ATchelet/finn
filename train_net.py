@@ -802,6 +802,8 @@ def train(
     n_anchors=5,
     n_epochs=100,
     batch_size=1,
+    lr_start=5 * 10 ** -4,
+    lr_end=1 * 10 ** -7,
     len_lim=-1,
     img_samples=6,
     loss_fnc="yolo",
@@ -819,10 +821,10 @@ def train(
     print(f"Trainig on: {device}")
     if quantized:
         print(
-            f"Network Set Up: \n\tQuantized - W{weight_bit_width}A{act_bit_width} with {n_anchors} anchors"
+            f"Network Configurations: \n\tQuantized - W{weight_bit_width}A{act_bit_width} with {n_anchors} anchors"
         )
     else:
-        print(f"Network Set Up: \n\tPytorch - with {n_anchors} anchors")
+        print(f"Network Configurations: \n\tPytorch - with {n_anchors} anchors")
     print(f"\tEpochs: {n_epochs}, Batch size: {batch_size}")
 
     # logger
@@ -872,8 +874,10 @@ def train(
         net = TinyYOLOv2(n_anchors)
     net = net.to(device)
     loss_func = YOLOLoss(anchors, device, loss_fnc=loss_fnc)
-    optimizer = torch.optim.Adam(net.parameters(), lr=0.005, weight_decay=1e-4)
-    scheduler = StepLR(optimizer, step_size=1, gamma=10 ** -0.1)
+    optimizer = torch.optim.Adam(net.parameters(), lr=lr_start, weight_decay=1e-4)
+    scheduler = StepLR(
+        optimizer, step_size=1, gamma=(lr_end / lr_start) ** (1 / n_epochs)
+    )
 
     # train network
     print("Training Start")
@@ -1113,6 +1117,8 @@ if __name__ == "__main__":
         n_anchors=n_anchors,
         n_epochs=n_epochs,
         batch_size=batch_size,
+        lr_start=1 * 10 ** -4,
+        lr_end=1 * 10 ** -7,
         len_lim=-1,
         img_samples=6,
         loss_fnc="yolo",

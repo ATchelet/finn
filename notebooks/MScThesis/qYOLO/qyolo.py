@@ -834,6 +834,8 @@ def train(
     n_anchors=5,
     n_epochs=100,
     batch_size=1,
+    lr_start=5 * 10 ** -4,
+    lr_end=1 * 10 ** -7,
     len_lim=-1,
     img_samples=6,
     loss_fnc="yolo",
@@ -851,10 +853,10 @@ def train(
     print(f"Trainig on: {device}")
     if quantized:
         print(
-            f"Network Set Up: \n\tQuantized - W{weight_bit_width}A{act_bit_width} with {n_anchors} anchors"
+            f"Network Configurations: \n\tQuantized - W{weight_bit_width}A{act_bit_width} with {n_anchors} anchors"
         )
     else:
-        print(f"Network Set Up: \n\tPytorch - with {n_anchors} anchors")
+        print(f"Network Configurations: \n\tPytorch - with {n_anchors} anchors")
     print(f"\tEpochs: {n_epochs}, Batch size: {batch_size}")
 
     # logger
@@ -904,8 +906,10 @@ def train(
         net = TinyYOLOv2(n_anchors)
     net = net.to(device)
     loss_func = YOLOLoss(anchors, device, loss_fnc=loss_fnc)
-    optimizer = torch.optim.Adam(net.parameters(), lr=0.005, weight_decay=1e-4)
-    scheduler = StepLR(optimizer, step_size=1, gamma=10 ** -0.1)
+    optimizer = torch.optim.Adam(net.parameters(), lr=lr_start, weight_decay=1e-4)
+    scheduler = StepLR(
+        optimizer, step_size=1, gamma=(lr_end / lr_start) ** (1 / n_epochs)
+    )
 
     # train network
     print("Training Start")
@@ -1131,20 +1135,20 @@ if __name__ == "__main__":
     n_anchors = 5
     anchors = torch.tensor(
         [
-            [0.09046052, 0.16578947],
-            [0.06190930, 0.11852134],
-            [0.10633224, 0.23462170],
-            [0.07584528, 0.13916497],
-            [0.08820564, 0.20065524],
+            [0.09438425, 0.23717517],
+            [0.25690740, 0.17878012],
+            [0.05543219, 0.08790404],
+            [0.09066416, 0.13482505],
+            [0.03120541, 0.04568261],
         ]
     )
-    n_epochs = 20
+    n_epochs = 50
     batch_size = 16
 
     net, anchors = train(
         img_dir,
         lbl_dir,
-        len_lim=100,
+        len_lim=-1,
         weight_bit_width=8,
         act_bit_width=8,
         n_epochs=n_epochs,
