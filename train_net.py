@@ -42,11 +42,17 @@ from brevitas.onnx import export_brevitas_onnx as exportONNX
 # size of output layer
 O_SIZE = 5  # bb_x, bb_y, bb_w, bb_h, bb_conf
 
-# bounding boxes grid output shape
+# image, input and bounding boxes grid output shapes
+IMG_SHP = torch.tensor([360, 640])  # (y, x)
+INPUT_SHP = torch.tensor([640, 640])  # (y, x)
 GRID_SIZE = torch.tensor([20, 20])  # (y, x)
 
 # Flag to use QuantTensor or not
 QUANT_TENSOR = False
+
+# global grid offset values placeholder
+gx = torch.tensor(0.0)
+gy = torch.tensor(0.0)
 
 #############################################
 #               Dataset                     #
@@ -464,30 +470,22 @@ class TinyYOLOv2(Module):
 
 def YOLOout(output, anchors, device, findBB):
 
+    # # set the outputs of the padded area to the values the loss sends them
+    # pad_cut = int(
+    #     (GRID_SIZE[0] - np.ceil(GRID_SIZE[0] * IMG_SHP[0] / IMG_SHP[1])) / 2.0
+    # )
+    # output[:, :, :pad_cut] = 0.0
+    # output[:, :, -pad_cut:] = 0.0
+
+    # reshape output to [batch, grid_boxes, anchors, predictions]
     output = output.flatten(-2, -1)
     output = output.transpose(-2, -1)
     output = output.view(output.size(0), GRID_SIZE.prod(), anchors.size(0), O_SIZE)
 
-    gx = (
-        (
-            (
-                torch.arange(GRID_SIZE[1]).repeat_interleave(
-                    GRID_SIZE[0] * anchors.size(0)
-                )
-            )
-            / GRID_SIZE[1]
-        ).view(GRID_SIZE.prod(), anchors.size(0))
-    ).to(device)
-    gy = (
-        (
-            (torch.arange(GRID_SIZE[0]).repeat(GRID_SIZE[1])).repeat_interleave(
-                anchors.size(0)
-            )
-            / GRID_SIZE[0]
-        ).view(GRID_SIZE.prod(), anchors.size(0))
-    ).to(device)
-    output[..., 0] = (torch.sigmoid(output[..., 0]) / GRID_SIZE[0]) + gx
-    output[..., 1] = (torch.sigmoid(output[..., 1]) / GRID_SIZE[1]) + gy
+    gx_ = gx.to(device)
+    gy_ = gy.to(device)
+    output[..., 0] = (torch.sigmoid(output[..., 0]) / GRID_SIZE[0]) + gx_
+    output[..., 1] = (torch.sigmoid(output[..., 1]) / GRID_SIZE[1]) + gy_
     output[..., 2] = torch.exp(output[..., 2]) * anchors[:, 0]
     output[..., 3] = torch.exp(output[..., 3]) * anchors[:, 1]
     output[..., 4] = torch.sigmoid(output[..., 4])
@@ -506,7 +504,6 @@ def YOLOout(output, anchors, device, findBB):
 
     return output
 
-
 #############################################
 #               Loss func                   #
 #############################################
@@ -518,10 +515,10 @@ class YOLOLoss(Module):
         anchors,
         device,
         loss_fnc="yolo",
-        l_coor_obj=5.0,
-        l_coor_noobj=5.0,
-        l_conf_obj=1.0,
-        l_conf_noobj=0.5,
+        l_coor_obj=1.5,
+        l_coor_noobj=1.0,
+        l_conf_obj=5.0,
+        l_conf_noobj=1.0,
     ):
         super().__init__()
         self.anchors = anchors.to(device)
@@ -536,7 +533,7 @@ class YOLOLoss(Module):
         self.i = 0
 
     def forward(self, pred_, label, is_training=True):
-        global logger
+        global logger, gx, gy
         # locate bounding box location and
         idx_x = (label[:, 0] * GRID_SIZE[1]).floor()
         idx_y = (label[:, 1] * GRID_SIZE[0]).floor()
@@ -555,24 +552,8 @@ class YOLOLoss(Module):
         ).argmax(1)
         # create anchors grid
         anchors_grid = torch.ones_like(pred[..., :4])
-        anchors_grid[..., 0] = (
-            (
-                torch.arange(GRID_SIZE[1]).repeat_interleave(
-                    GRID_SIZE[0] * self.anchors.size(0)
-                )
-                + 0.5
-            )
-            / GRID_SIZE[1]
-        ).view(GRID_SIZE.prod(), self.anchors.size(0))
-        anchors_grid[..., 1] = (
-            (
-                (torch.arange(GRID_SIZE[0]).repeat(GRID_SIZE[1])).repeat_interleave(
-                    self.anchors.size(0)
-                )
-                + 0.5
-            )
-            / GRID_SIZE[0]
-        ).view(GRID_SIZE.prod(), self.anchors.size(0))
+        anchors_grid[..., 0] = gx + (0.5 / GRID_SIZE[1])
+        anchors_grid[..., 1] = gy + (0.5 / GRID_SIZE[0])
         anchors_grid[..., 2:4] = self.anchors
         # mask of obj and noobj
         obj_mask = (torch.zeros_like(pred)).type(torch.bool)
@@ -788,6 +769,19 @@ def getXYminmax(pred, label, w=640, h=640):
     return torch.stack([pred_, label_], 0).view(2, 4)
 
 
+def set_grids_mats(n_anchors):
+    global gx, gy
+
+    gx = (
+        (torch.arange(GRID_SIZE[1]).repeat_interleave(GRID_SIZE[0] * n_anchors))
+        / GRID_SIZE[1]
+    ).view(GRID_SIZE.prod(), n_anchors)
+
+    gy = (
+        (torch.arange(GRID_SIZE[0]).repeat(GRID_SIZE[1])).repeat_interleave(n_anchors)
+        / GRID_SIZE[0]
+    ).view(GRID_SIZE.prod(), n_anchors)
+
 #############################################
 #               Training                    #
 #############################################
@@ -817,6 +811,7 @@ def train(
 
     if torch.is_tensor(anchors):
         n_anchors = anchors.size(0)
+    set_grids_mats(n_anchors)
 
     print(f"Trainig on: {device}")
     if quantized:
@@ -1117,10 +1112,10 @@ if __name__ == "__main__":
         n_anchors=n_anchors,
         n_epochs=n_epochs,
         batch_size=batch_size,
-        lr_start=1 * 10 ** -4,
+        lr_start=5 * 10 ** -4,
         lr_end=1 * 10 ** -7,
         len_lim=-1,
-        img_samples=6,
+        img_samples=8,
         loss_fnc="yolo",
         quantized=True,
     )
