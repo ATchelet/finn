@@ -20,6 +20,7 @@ from torch.nn import (
     MaxPool2d,
     MSELoss,
     BCELoss,
+    DataParallel,
 )
 from brevitas.nn import (
     QuantIdentity,
@@ -48,6 +49,8 @@ GRID_SIZE = torch.tensor([20, 20])  # (y, x)
 
 # Flag to use QuantTensor or not
 QUANT_TENSOR = False
+# Flag to use anchors averaging or not
+ANCHOR_AVE = True
 
 # global grid offset values placeholder
 gx = torch.tensor(0.0)
@@ -480,26 +483,36 @@ def YOLOout(output, anchors, device, findBB):
     output = output.flatten(-2, -1)
     output = output.transpose(-2, -1)
     output = output.view(output.size(0), GRID_SIZE.prod(), anchors.size(0), O_SIZE)
+    if ANCHOR_AVE:
+        output = output.mean(-2)
 
     gx_ = gx.to(device)
     gy_ = gy.to(device)
     output[..., 0] = (torch.sigmoid(output[..., 0]) / GRID_SIZE[0]) + gx_
     output[..., 1] = (torch.sigmoid(output[..., 1]) / GRID_SIZE[1]) + gy_
-    output[..., 2] = torch.exp(output[..., 2]) * anchors[:, 0]
-    output[..., 3] = torch.exp(output[..., 3]) * anchors[:, 1]
+    if ANCHOR_AVE:
+        output[..., 2] = torch.exp(output[..., 2]) * anchors[0,0]
+        output[..., 3] = torch.exp(output[..., 3]) * anchors[0,1]
+    else:
+        output[..., 2] = torch.exp(output[..., 2]) * anchors[:, 0]
+        output[..., 3] = torch.exp(output[..., 3]) * anchors[:, 1]
     output[..., 4] = torch.sigmoid(output[..., 4])
 
     # find the most probable grid and box
     if findBB:
-        # localizing most probable bounding box
-        bb_conf, bb_idx = torch.max(output[..., -1], -1)
-        g_idx = bb_conf.argmax(-1)
-        output = output[
-            torch.arange(output.size(0)),
-            g_idx,
-            bb_idx[torch.arange(output.size(0)), g_idx],
-            :4,
-        ]
+        if ANCHOR_AVE:
+            amax = output[...,4].argmax(-1)
+            output = output[torch.arange(output.size(0)), amax]
+        else:
+            # localizing most probable bounding box
+            bb_conf, bb_idx = torch.max(output[..., -1], -1)
+            g_idx = bb_conf.argmax(-1)
+            output = output[
+                torch.arange(output.size(0)),
+                g_idx,
+                bb_idx[torch.arange(output.size(0)), g_idx],
+                :4,
+            ]
 
     return output
 
@@ -541,24 +554,31 @@ class YOLOLoss(Module):
         # convert predictions to label style
         pred = YOLOout(pred_, self.anchors, self.device, False)
         # find closest anchor
-        anchor_mask = (
-            (
+        if not ANCHOR_AVE:
+            anchor_mask = (
                 (
-                    label[:, 2:4].unsqueeze(1).repeat((1, self.anchors.size(0), 1))
-                    - self.anchors.unsqueeze(0).repeat((label.size(0), 1, 1))
-                )
-                ** 2.0
-            ).sum(2)
-        ).argmax(1)
+                    (
+                        label[:, 2:4].unsqueeze(1).repeat((1, self.anchors.size(0), 1))
+                        - self.anchors.unsqueeze(0).repeat((label.size(0), 1, 1))
+                    )
+                    ** 2.0
+                ).sum(2)
+            ).argmax(1)
         # create anchors grid
         anchors_grid = torch.ones_like(pred[..., :4])
         anchors_grid[..., 0] = gx + (0.5 / GRID_SIZE[1])
         anchors_grid[..., 1] = gy + (0.5 / GRID_SIZE[0])
-        anchors_grid[..., 2:4] = self.anchors
+        if ANCHOR_AVE:
+            anchors_grid[..., 2:4] = self.anchors[0]
+        else:
+            anchors_grid[..., 2:4] = self.anchors
         # mask of obj and noobj
         obj_mask = (torch.zeros_like(pred)).type(torch.bool)
         for i in range(obj_mask.size(0)):
-            obj_mask[i, idx[i], anchor_mask[i], :] = True
+            if ANCHOR_AVE:
+                obj_mask[i, idx[i], :] = True
+            else:
+                obj_mask[i, idx[i], anchor_mask[i], :] = True
         noobj_mask = ~obj_mask
         # prepare loss calculation parts
         pred_obj = pred[obj_mask].view(pred.shape[0], 5)
@@ -719,7 +739,7 @@ def IoU_calc(pred, label):
     return inter_area / (label_area + pred_area - inter_area)
 
 
-def AssessBBDiffs(pred, label, w=640, h=640):
+def AssessBBDiffs(pred, label, w=INPUT_SHP[1], h=INPUT_SHP[0]):
     # calculate Centres Distance
     CentDist = (
         ((pred[:, 0] - label[:, 0]) * w) ** 2.0
@@ -731,7 +751,7 @@ def AssessBBDiffs(pred, label, w=640, h=640):
     return [CentDist, SizeRatio]
 
 
-def getXYminmax(pred, label, w=640, h=640):
+def getXYminmax(pred, label, w=INPUT_SHP[1], h=INPUT_SHP[0]):
     pred_ = torch.stack(
         [
             (
@@ -772,15 +792,26 @@ def getXYminmax(pred, label, w=640, h=640):
 def set_grids_mats(n_anchors):
     global gx, gy
 
-    gx = (
-        (torch.arange(GRID_SIZE[1]).repeat_interleave(GRID_SIZE[0] * n_anchors))
-        / GRID_SIZE[1]
-    ).view(GRID_SIZE.prod(), n_anchors)
+    if ANCHOR_AVE:    
+        gx = (
+            (torch.arange(GRID_SIZE[1]).repeat_interleave(GRID_SIZE[0]))
+            / GRID_SIZE[1]
+        )
 
-    gy = (
-        (torch.arange(GRID_SIZE[0]).repeat(GRID_SIZE[1])).repeat_interleave(n_anchors)
-        / GRID_SIZE[0]
-    ).view(GRID_SIZE.prod(), n_anchors)
+        gy = (
+            (torch.arange(GRID_SIZE[0]).repeat(GRID_SIZE[1]))
+            / GRID_SIZE[0]
+        )
+    else:
+        gx = (
+            (torch.arange(GRID_SIZE[1]).repeat_interleave(GRID_SIZE[0] * n_anchors))
+            / GRID_SIZE[1]
+        ).view(GRID_SIZE.prod(), n_anchors)
+
+        gy = (
+            (torch.arange(GRID_SIZE[0]).repeat(GRID_SIZE[1])).repeat_interleave(n_anchors)
+            / GRID_SIZE[0]
+        ).view(GRID_SIZE.prod(), n_anchors)
 
 
 # TODO Might need to implement it in C/C++ to add it to the board software implementation
@@ -901,6 +932,8 @@ def train(
         net = QTinyYOLOv2(n_anchors, weight_bit_width, act_bit_width)
     else:
         net = TinyYOLOv2(n_anchors)
+    if torch.cuda.device_count() > 1:
+        net = DataParallel(net)
     net = net.to(device)
     loss_func = YOLOLoss(anchors, device, loss_fnc=loss_fnc)
     optimizer = torch.optim.Adam(net.parameters(), lr=lr_start, weight_decay=1e-4)
@@ -1130,15 +1163,16 @@ if __name__ == "__main__":
     img_dir = "./Dataset/images"
     lbl_dir = "./Dataset/labels"
     n_anchors = 5
-    anchors = torch.tensor(
-        [
-            [0.09438425, 0.23717517],
-            [0.25690740, 0.17878012],
-            [0.05543219, 0.08790404],
-            [0.09066416, 0.13482505],
-            [0.03120541, 0.04568261],
-        ]
-    )
+    # anchors = torch.tensor([[0.17775965, 0.12690470],
+    #                         [0.11733948, 0.24617620],
+    #                         [0.05872642, 0.08477669],
+    #                         [0.03005564, 0.04518913],
+    #                         [0.06502857, 0.14770794]])
+    anchors = torch.tensor([[0.08978195, 0.13015094],
+                            [0.08978195, 0.13015094],
+                            [0.08978195, 0.13015094],
+                            [0.08978195, 0.13015094],
+                            [0.08978195, 0.13015094]])
     n_epochs = 50
     batch_size = 20
 

@@ -9,15 +9,19 @@ export IMG_DIR=/srv/cdl-eml/User/atchelet/Dataset/images
 export LBL_DIR=/srv/cdl-eml/User/atchelet/Dataset/labels
 
 # script
-cd /home/atchelet/git/finn_at/finn_at/finn_at
+# EDA01
+cd /home/atchelet/git/finn/
+# EDA02
+# cd /home/atchelet/git/finn_at/finn_at/finn_at
 echo "Start training"
 # train_net.py IMAGES_DIR LABELS_DIR WEIGHT_BIT ACTIVATION_BIT NUM_ANCHORS NUM_EPOCHS BATCH_SIZE
-time python3 ./train_net.py $IMG_DIR $LBL_DIR 8 8 5 100 32
-time python3 ./train_net.py $IMG_DIR $LBL_DIR 4 8 5 100 32
-time python3 ./train_net.py $IMG_DIR $LBL_DIR 4 4 5 100 32
-time python3 ./train_net.py $IMG_DIR $LBL_DIR 2 4 5 100 32
-time python3 ./train_net.py $IMG_DIR $LBL_DIR 3 3 5 100 32
-time python3 ./train_net.py $IMG_DIR $LBL_DIR 1 3 5 100 32
+time python3 -m torch.distributed.launch --nproc_per_node 1 ./train_net.py $IMG_DIR $LBL_DIR 0 0 5 100 64
+time python3 -m torch.distributed.launch --nproc_per_node 1 ./train_net.py $IMG_DIR $LBL_DIR 3 3 5 100 64
+time python3 -m torch.distributed.launch --nproc_per_node 1 ./train_net.py $IMG_DIR $LBL_DIR 4 4 5 100 64
+time python3 -m torch.distributed.launch --nproc_per_node 1 ./train_net.py $IMG_DIR $LBL_DIR 8 8 5 100 64
+time python3 -m torch.distributed.launch --nproc_per_node 1 ./train_net.py $IMG_DIR $LBL_DIR 1 3 5 100 64
+time python3 -m torch.distributed.launch --nproc_per_node 1 ./train_net.py $IMG_DIR $LBL_DIR 2 4 5 100 64
+time python3 -m torch.distributed.launch --nproc_per_node 1 ./train_net.py $IMG_DIR $LBL_DIR 4 8 5 100 64
 echo "finished!"
 
 end_date=$(date)
