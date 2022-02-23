@@ -1103,13 +1103,23 @@ if __name__ == "__main__":
     n_epochs = int(sys.argv[6])
     batch_size = int(sys.argv[7])
 
+    if weight_bit_width==0 or act_bit_width==0:
+        quantized = False
+    else:
+        quantized = True
+
+    anchors = torch.tensor([[0.17775965, 0.12690470],
+                            [0.11733948, 0.24617620],
+                            [0.05872642, 0.08477669],
+                            [0.03005564, 0.04518913],
+                            [0.06502857, 0.14770794]])
+
     anchors, net = train(
         img_dir,
         lbl_dir,
         weight_bit_width=weight_bit_width,
         act_bit_width=act_bit_width,
-        anchors=False,
-        n_anchors=n_anchors,
+        anchors=anchors,
         n_epochs=n_epochs,
         batch_size=batch_size,
         lr_start=5 * 10 ** -4,
@@ -1117,6 +1127,6 @@ if __name__ == "__main__":
         len_lim=-1,
         img_samples=8,
         loss_fnc="yolo",
-        quantized=True,
+        quantized=quantized,
     )
 
