@@ -97,7 +97,7 @@ SCRIPTPATH=$(dirname "$SCRIPT")
 : ${FINN_DOCKER_PREBUILT="0"}
 : ${FINN_DOCKER_RUN_AS_ROOT="no-root"}
 : ${FINN_DOCKER_GPU="$(docker info | grep nvidia | wc -m)"}
-: ${FINN_DOCKER_EXTRA=""}
+: ${FINN_DOCKER_EXTRA=" -e XILINXD_LICENSE_FILE=$XILINXD_LICENSE_FILE "}
 : ${NVIDIA_VISIBLE_DEVICES=""}
 : ${DOCKER_BUILDKIT="1"}
 
@@ -227,7 +227,6 @@ if [ ! -z "$FINN_XILINX_PATH" ];then
     DOCKER_EXEC+="-e ALVEO_TARGET_DIR=$ALVEO_TARGET_DIR "
   fi
 fi
-DOCKER_EXEC+="-e XILINXD_LICENSE_FILE=$XILINXD_LICENSE_FILE "
 DOCKER_EXEC+="-v /etc/timezone:/etc/timezone "
 DOCKER_EXEC+="-v /etc/localtime:/etc/localtime "
 DOCKER_EXEC+="$FINN_DOCKER_EXTRA "
