@@ -492,8 +492,8 @@ def YOLOout(output, anchors, device, findBB):
     output[..., 0] = (torch.sigmoid(output[..., 0]) / GRID_SIZE[0]) + gx_
     output[..., 1] = (torch.sigmoid(output[..., 1]) / GRID_SIZE[1]) + gy_
     if ANCHOR_AVE:
-        output[..., 2] = torch.exp(output[..., 2]) * anchors[0,0]
-        output[..., 3] = torch.exp(output[..., 3]) * anchors[0,1]
+        output[..., 2] = torch.exp(output[..., 2]) * anchors[0, 0]
+        output[..., 3] = torch.exp(output[..., 3]) * anchors[0, 1]
     else:
         output[..., 2] = torch.exp(output[..., 2]) * anchors[:, 0]
         output[..., 3] = torch.exp(output[..., 3]) * anchors[:, 1]
@@ -502,7 +502,7 @@ def YOLOout(output, anchors, device, findBB):
     # find the most probable grid and box
     if findBB:
         if ANCHOR_AVE:
-            amax = output[...,4].argmax(-1)
+            amax = output[..., 4].argmax(-1)
             output = output[torch.arange(output.size(0)), amax]
         else:
             # localizing most probable bounding box
@@ -516,6 +516,7 @@ def YOLOout(output, anchors, device, findBB):
             ]
 
     return output
+
 
 #############################################
 #               Loss func                   #
@@ -692,9 +693,12 @@ def getAnchors(dataset, n_anchors, device):
         else:
             datapoints = data
     # k-means clustering
-    kmean_idx, anchors = kmeans(
-        X=datapoints, num_clusters=n_anchors, distance="euclidean", device=device
-    )
+    if ANCHOR_AVE:
+        anchors = datapoints.mean(0)
+    else:
+        kmean_idx, anchors = kmeans(
+            X=datapoints, num_clusters=n_anchors, distance="euclidean", device=device
+        )
     print(f"Anchors for k={n_anchors}:")
     [print(f"[{anchor[0]: .8f}, {anchor[1]: .8f}]") for anchor in anchors]
     return anchors
@@ -792,16 +796,10 @@ def getXYminmax(pred, label, w=INPUT_SHP[1], h=INPUT_SHP[0]):
 def set_grids_mats(n_anchors):
     global gx, gy
 
-    if ANCHOR_AVE:    
-        gx = (
-            (torch.arange(GRID_SIZE[1]).repeat_interleave(GRID_SIZE[0]))
-            / GRID_SIZE[1]
-        )
+    if ANCHOR_AVE:
+        gx = (torch.arange(GRID_SIZE[1]).repeat_interleave(GRID_SIZE[0])) / GRID_SIZE[1]
 
-        gy = (
-            (torch.arange(GRID_SIZE[0]).repeat(GRID_SIZE[1]))
-            / GRID_SIZE[0]
-        )
+        gy = (torch.arange(GRID_SIZE[0]).repeat(GRID_SIZE[1])) / GRID_SIZE[0]
     else:
         gx = (
             (torch.arange(GRID_SIZE[1]).repeat_interleave(GRID_SIZE[0] * n_anchors))
@@ -809,9 +807,12 @@ def set_grids_mats(n_anchors):
         ).view(GRID_SIZE.prod(), n_anchors)
 
         gy = (
-            (torch.arange(GRID_SIZE[0]).repeat(GRID_SIZE[1])).repeat_interleave(n_anchors)
+            (torch.arange(GRID_SIZE[0]).repeat(GRID_SIZE[1])).repeat_interleave(
+                n_anchors
+            )
             / GRID_SIZE[0]
         ).view(GRID_SIZE.prod(), n_anchors)
+
 
 #############################################
 #               Training                    #
@@ -855,9 +856,12 @@ def train(
 
     # logger
     global logger
-    logger = torch.utils.tensorboard.SummaryWriter(
-        comment=f"W{weight_bit_width}A{act_bit_width}a{n_anchors}"
-    )
+    if quantized:
+        logger = torch.utils.tensorboard.SummaryWriter(
+            comment=f"W{weight_bit_width}A{act_bit_width}a{n_anchors}"
+        )
+    else:
+        logger = torch.utils.tensorboard.SummaryWriter(comment=f"PyTorch_a{n_anchors}")
 
     # dataset
     transformers = transforms.Compose([ToTensor(), Normalize()])
@@ -885,10 +889,8 @@ def train(
     )
 
     # get anchors
-    save_anchors = True
     if torch.is_tensor(anchors):
         anchors = anchors.to(device)
-        save_anchors = False
     else:
         print("Calculating Anchors")
         anchors = (getAnchors(train_loader, n_anchors, device)).to(device)
@@ -1100,7 +1102,7 @@ def train(
     if quantized:
         net.eval()
         onnx_path = f"./train_out/trained_net_W{weight_bit_width}A{act_bit_width}_a{n_anchors}.onnx"
-        exportONNX(net, (1, 3, 640, 640), onnx_path)
+        exportONNX(net, (1, 3, INPUT_SHP[0], INPUT_SHP[1]), onnx_path)
 
     # save network
     if quantized:
@@ -1111,15 +1113,14 @@ def train(
         torch.save(net.state_dict(), net_path)
 
     # save anchors
-    if save_anchors:
-        if len_lim == -1:
-            anchors_path = f"./train_out/{n_anchors}.txt"
-        else:
-            anchors_path = f"./train_out/{n_anchors}_anchors_first_{len(dataset)}.txt"
-        f = open(anchors_path, "w")
-        for anchor in anchors:
-            f.write(f"{anchor[0]: .8f}, {anchor[1]: .8f}\n")
-        f.close()
+    if len_lim == -1:
+        anchors_path = f"./train_out/{n_anchors}.txt"
+    else:
+        anchors_path = f"./train_out/{n_anchors}_anchors_first_{len(dataset)}.txt"
+    f = open(anchors_path, "w")
+    for anchor in anchors:
+        f.write(f"{anchor[0]: .8f}, {anchor[1]: .8f}\n")
+    f.close()
 
     return [net, anchors]
 
@@ -1136,7 +1137,7 @@ if __name__ == "__main__":
     n_epochs = int(sys.argv[-2])
     batch_size = int(sys.argv[-1])
 
-    if weight_bit_width==0 or act_bit_width==0:
+    if weight_bit_width == 0 or act_bit_width == 0:
         quantized = False
     else:
         quantized = True
@@ -1146,11 +1147,15 @@ if __name__ == "__main__":
     #                         [0.05872642, 0.08477669],
     #                         [0.03005564, 0.04518913],
     #                         [0.06502857, 0.14770794]])
-    anchors = torch.tensor([[0.08978195, 0.13015094],
-                            [0.08978195, 0.13015094],
-                            [0.08978195, 0.13015094],
-                            [0.08978195, 0.13015094],
-                            [0.08978195, 0.13015094]])
+    anchors = torch.tensor(
+        [
+            [0.08978195, 0.13015094],
+            [0.08978195, 0.13015094],
+            [0.08978195, 0.13015094],
+            [0.08978195, 0.13015094],
+            [0.08978195, 0.13015094],
+        ]
+    )
 
     anchors, net = train(
         img_dir,
