@@ -1,4 +1,5 @@
 # general use libraries
+from imghdr import tests
 import os
 from tqdm import tqdm, trange
 import numpy as np
@@ -9,7 +10,7 @@ from kmeans_pytorch import kmeans
 # Brevitas ad PyTorch libraries
 import torch
 from torch.utils.data import Dataset, DataLoader, Subset
-from torch.optim.lr_scheduler import StepLR
+from torch.optim.lr_scheduler import StepLR, OneCycleLR
 from torchvision import transforms
 from torch.nn import (
     Module,
@@ -483,6 +484,7 @@ def YOLOout(output, anchors, device, findBB):
     output = output.flatten(-2, -1)
     output = output.transpose(-2, -1)
     output = output.view(output.size(0), GRID_SIZE.prod(), anchors.size(0), O_SIZE)
+    output[..., 4] = torch.sigmoid(output[..., 4])
     if ANCHOR_AVE:
         output = output.mean(-2)
 
@@ -496,7 +498,6 @@ def YOLOout(output, anchors, device, findBB):
     else:
         output[..., 2] = torch.exp(output[..., 2]) * anchors[:, 0]
         output[..., 3] = torch.exp(output[..., 3]) * anchors[:, 1]
-    output[..., 4] = torch.sigmoid(output[..., 4])
 
     # find the most probable grid and box
     if findBB:
@@ -528,7 +529,7 @@ class YOLOLoss(Module):
         anchors,
         device,
         loss_fnc="yolo",
-        l_coor_obj=1.5,
+        l_coor_obj=2.0,
         l_coor_noobj=1.0,
         l_conf_obj=5.0,
         l_conf_noobj=1.0,
@@ -693,7 +694,7 @@ def getAnchors(dataset, n_anchors, device):
             datapoints = data
     # k-means clustering
     if ANCHOR_AVE:
-        anchors = datapoints.mean(0)
+        anchors = datapoints.mean(0, True).repeat(n_anchors, 1)
     else:
         kmean_idx, anchors = kmeans(
             X=datapoints, num_clusters=n_anchors, distance="euclidean", device=device
@@ -813,37 +814,19 @@ def set_grids_mats(n_anchors):
         ).view(GRID_SIZE.prod(), n_anchors)
 
 
-# TODO Might need to implement it in C/C++ to add it to the board software implementation
-def YoloOutput(pred, anchors, w=16, h=9):
-    n = anchors.shape[0]
-    bb_conf, bb_idx = torch.max(pred[..., -1], -1)
-    g_idx = bb_conf.argmax(-1)
-    output = pred[..., g_idx, bb_idx[g_idx], :4]
-    cx = (g_idx // h) / w
-    cy = (g_idx % h) / h
-    pw, ph = anchors[bb_idx[g_idx]]
-    bx = output[0].sigmoid() + cx
-    by = output[1].sigmoid() + cy
-    bw = output[2].exp() * pw
-    bh = output[3].exp() * ph
-    return [bx, by, bw, bh]
+def exportTestset(testset, path):
+    from torchvision.transforms import ToPILImage
 
-
-def readAnchors(path):
-    anchors = False
-    with open(path) as f:
-        for data in f.readlines():
-            if torch.is_tensor(anchors):
-                anchors = torch.vstack(
-                    [
-                        anchors,
-                        torch.from_numpy(np.array(data.split(", ")).astype(float)),
-                    ]
-                )
-            else:
-                anchors = torch.from_numpy(np.array(data.split(", ")).astype(float))
-        f.close()
-    return anchors
+    images = []
+    os.makedirs(path, exist_ok=True)
+    f = open(os.path.join(path, "testset_labels.txt"), "w")
+    for i, [img, lbl] in enumerate(testset):
+        img = np.array(ToPILImage()((img + 1.0) / 2.0))
+        # io.imsave(os.path.join(path, "images", f"{i:09d}.jpg"), img)
+        images.append(img)
+        f.write(f"{lbl[0]:.8f}\t{lbl[1]:.8f}\t{lbl[2]:.8f}\t{lbl[3]:.8f}\n")
+    f.close()
+    np.savez(os.path.join(path, "testset_images.npz"), images)
 
 
 #############################################
@@ -860,12 +843,15 @@ def train(
     n_anchors=5,
     n_epochs=100,
     batch_size=1,
-    lr_start=5 * 10 ** -4,
-    lr_end=1 * 10 ** -7,
+    lr_start=1 * 10 ** -4,
+    lr_end=1 * 10 ** -6,
+    lr_max=1 * 10 ** -3,
     len_lim=-1,
     img_samples=6,
     loss_fnc="yolo",
+    schdlr="OneCycleLR",
     quantized=True,
+    export_testset=False,
 ):
     if not quantized:
         global QUANT_TENSOR
@@ -910,6 +896,8 @@ def train(
     train_set = Subset(dataset, train_idx)
     valid_set = Subset(dataset, valid_idx)
     test_set = Subset(dataset, test_idx)
+    if export_testset:
+        exportTestset(test_set, "./Testset/")
     train_loader = DataLoader(
         train_set, batch_size=batch_size, shuffle=True, num_workers=4
     )
@@ -937,22 +925,33 @@ def train(
     net = net.to(device)
     loss_func = YOLOLoss(anchors, device, loss_fnc=loss_fnc)
     optimizer = torch.optim.Adam(net.parameters(), lr=lr_start, weight_decay=1e-4)
-    scheduler = StepLR(
-        optimizer, step_size=1, gamma=(lr_end / lr_start) ** (1 / n_epochs)
-    )
+    if schdlr == "StepLR":
+        scheduler = StepLR(
+            optimizer, step_size=1, gamma=(lr_end / lr_start) ** (1 / n_epochs)
+        )
+    elif schdlr == "OneCycleLR":
+        scheduler = OneCycleLR(
+            optimizer,
+            max_lr=lr_max,
+            total_steps=n_epochs * len(train_loader),
+            anneal_strategy="cos",
+            pct_start=0.3,
+            div_factor=lr_max / lr_start,
+            final_div_factor=lr_start / lr_end,
+        )
 
     # train network
     print("Training Start")
     for epoch in trange(n_epochs, desc="epoch", unit="epoch"):
-        logger.add_scalar(
-            "LossParts/learning_rate",
-            scheduler.get_last_lr()[0],
-            epoch * len(train_loader),
-        )
-        # train + train loss
+        # train
         net.train()
+        train_total = 0
         train_loss = 0.0
-        valid_loss = 0.0
+        train_miou = 0.0
+        train_AP50 = 0.0
+        train_AP75 = 0.0
+        train_ctrdist = 0.0
+        train_ratio = 0.0
         for i, data in tqdm(
             enumerate(train_loader, 0),
             total=len(train_loader),
@@ -967,19 +966,53 @@ def train(
             outputs = net(inputs)
             if QUANT_TENSOR:
                 loss = loss_func(outputs.value.float(), labels.float())
+                bb_outputs = YOLOout(outputs.value, anchors, device, True)
             else:
                 loss = loss_func(outputs.float(), labels.float())
+                bb_outputs = YOLOout(outputs, anchors, device, True)
             loss.backward()
             optimizer.step()
+            iou = IoU_calc(bb_outputs, labels)
+            ctrDist, ratio = AssessBBDiffs(bb_outputs, labels)
+            train_total += labels.size(0)
             train_loss += loss.item()
             logger.add_scalar(
                 "Loss/train_continuous", loss.item(), i + epoch * len(train_loader)
             )
-        scheduler.step()
+            logger.add_scalar(
+                "LossParts/learning_rate",
+                scheduler.get_last_lr()[0],
+                i + epoch * len(train_loader),
+            )
+            train_miou += iou.sum()
+            train_AP50 += (iou >= 0.5).sum()
+            train_AP75 += (iou >= 0.75).sum()
+            train_ctrdist += ctrDist.sum()
+            train_ratio += ratio.sum()
+            if schdlr == "OneCycleLR":
+                scheduler.step()
+        if schdlr == "StepLR":
+            scheduler.step()
         # log loss statistics
         logger.add_scalar("Loss/train", train_loss / len(train_loader), epoch)
-        # valid loss
+        # log accuracy statistics
+        logger.add_scalar("TrainingAcc/meanIoU", train_miou / train_len, epoch)
+        logger.add_scalar("TrainingAcc/meanAP50", train_AP50 / train_len, epoch)
+        logger.add_scalar("TrainingAcc/meanAP75", train_AP75 / train_len, epoch)
+        logger.add_scalar(
+            "TrainingAcc/CtrDist", train_ctrdist / train_len, epoch,
+        )
+        logger.add_scalar("TrainingAcc/SizesRatio", train_ratio / train_len, epoch)
+
+        # validation
         net.eval()
+        valid_total = 0
+        valid_loss = 0.0
+        valid_miou = 0.0
+        valid_AP50 = 0.0
+        valid_AP75 = 0.0
+        valid_ctrdist = 0.0
+        valid_ratio = 0.0
         with torch.no_grad():
             for i, data in tqdm(
                 enumerate(valid_loader, 0),
@@ -993,96 +1026,40 @@ def train(
                     t_loss = loss_func(
                         valid_outputs.value.float(), valid_labels.float(), False
                     )
+                    bb_outputs = YOLOout(outputs.value, anchors, device, True)
                 else:
                     t_loss = loss_func(
                         valid_outputs.float(), valid_labels.float(), False
                     )
-                valid_loss += t_loss.item()
-        # log loss statistics
-        logger.add_scalar("Loss/valid", valid_loss / len(valid_loader), epoch)
-
-        # train accuracy
-        with torch.no_grad():
-            train_miou = 0.0
-            train_AP50 = 0.0
-            train_AP75 = 0.0
-            train_ctrdist = 0.0
-            train_ratio = 0.0
-            train_total = 0
-            for i, data in tqdm(
-                enumerate(train_loader),
-                total=len(train_loader),
-                desc="train accuracy",
-                unit="batch",
-            ):
-                images, labels = data[0].to(device), data[1].to(device)
-                outputs = net(images)
-                if QUANT_TENSOR:
-                    bb_outputs = YOLOout(outputs.value, anchors, device, True)
-                else:
-                    bb_outputs = YOLOout(outputs, anchors, device, True)
-                iou = IoU_calc(bb_outputs, labels)
-                ctrDist, ratio = AssessBBDiffs(bb_outputs, labels)
-                train_total += labels.size(0)
-                train_miou += iou.sum()
-                train_AP50 += (iou >= 0.5).sum()
-                train_AP75 += (iou >= 0.75).sum()
-                train_ctrdist += ctrDist.sum()
-                train_ratio += ratio.sum()
-            # log accuracy statistics
-            logger.add_scalar("TrainingAcc/meanIoU", train_miou / train_len, epoch)
-            logger.add_scalar("TrainingAcc/meanAP50", train_AP50 / train_len, epoch)
-            logger.add_scalar("TrainingAcc/meanAP75", train_AP75 / train_len, epoch)
-            logger.add_scalar(
-                "TrainingAcc/CtrDist", train_ctrdist / train_len, epoch,
-            )
-            logger.add_scalar("TrainingAcc/SizesRatio", train_ratio / train_len, epoch)
-        # valid accuracy
-        with torch.no_grad():
-            valid_miou = 0.0
-            valid_AP50 = 0.0
-            valid_AP75 = 0.0
-            valid_ctrdist = 0.0
-            valid_ratio = 0.0
-            valid_total = 0
-            for i, data in tqdm(
-                enumerate(valid_loader),
-                total=len(valid_loader),
-                desc="valid accuracy",
-                unit="batch",
-            ):
-                images, labels = data[0].to(device), data[1].to(device)
-                outputs = net(images)
-                if QUANT_TENSOR:
-                    bb_outputs = YOLOout(outputs.value, anchors, device, True)
-                else:
                     bb_outputs = YOLOout(outputs, anchors, device, True)
                 iou = IoU_calc(bb_outputs, labels)
                 ctrDist, ratio = AssessBBDiffs(bb_outputs, labels)
                 valid_total += labels.size(0)
+                valid_loss += t_loss.item()
                 valid_miou += iou.sum()
                 valid_AP50 += (iou >= 0.5).sum()
                 valid_AP75 += (iou >= 0.75).sum()
                 valid_ctrdist += ctrDist.sum()
                 valid_ratio += ratio.sum()
-            # log accuracy statistics
-            logger.add_scalar("ValidationAcc/meanIoU", valid_miou / valid_len, epoch)
-            logger.add_scalar("ValidationAcc/meanAP50", valid_AP50 / valid_len, epoch)
-            logger.add_scalar("ValidationAcc/meanAP75", valid_AP75 / valid_len, epoch)
-            logger.add_scalar(
-                "ValidationAcc/CtrDist", valid_ctrdist / valid_len, epoch,
-            )
-            logger.add_scalar(
-                "ValidationAcc/SizesRatio", valid_ratio / valid_len, epoch
-            )
+        # log loss statistics
+        logger.add_scalar("Loss/valid", valid_loss / len(valid_loader), epoch)
+        # log accuracy statistics
+        logger.add_scalar("ValidationAcc/meanIoU", valid_miou / valid_len, epoch)
+        logger.add_scalar("ValidationAcc/meanAP50", valid_AP50 / valid_len, epoch)
+        logger.add_scalar("ValidationAcc/meanAP75", valid_AP75 / valid_len, epoch)
+        logger.add_scalar(
+            "ValidationAcc/CtrDist", valid_ctrdist / valid_len, epoch,
+        )
+        logger.add_scalar("ValidationAcc/SizesRatio", valid_ratio / valid_len, epoch)
 
         # sample images bb for logger
+        net.eval()
         with torch.no_grad():
             # sample train images
             if train_len <= img_samples:
                 step = 1
             else:
-                step = int(train_len / img_samples)
+                step = int(np.ceil(train_len / img_samples))
             train_smp_set = Subset(train_set, np.arange(train_len, step=step))
             for n, [train_smp_img, train_smp_lbl] in enumerate(train_smp_set):
                 train_smp_img = (train_smp_img.unsqueeze(0)).to(device)
@@ -1106,7 +1083,7 @@ def train(
             if valid_len <= img_samples:
                 step = 1
             else:
-                step = int(valid_len / img_samples)
+                step = int(np.ceil(valid_len / img_samples))
             valid_smp_set = Subset(valid_set, np.arange(valid_len, step=step))
             for n, [valid_smp_img, valid_smp_lbl] in enumerate(valid_smp_set):
                 valid_smp_img = (valid_smp_img.unsqueeze(0)).to(device)
@@ -1145,10 +1122,11 @@ def train(
         torch.save(net.state_dict(), net_path)
 
     # save anchors
+    mean = "mean_" if ANCHOR_AVE else ""
     if len_lim == -1:
-        anchors_path = f"./train_out/{n_anchors}.txt"
+        anchors_path = f"./train_out/{n_anchors}_{mean}anchors.txt"
     else:
-        anchors_path = f"./train_out/{n_anchors}_anchors_first_{len(dataset)}.txt"
+        anchors_path = f"./train_out/{n_anchors}_{mean}anchors_first_{len(dataset)}.txt"
     f = open(anchors_path, "w")
     for anchor in anchors:
         f.write(f"{anchor[0]: .8f}, {anchor[1]: .8f}\n")
@@ -1176,58 +1154,48 @@ if __name__ == "__main__":
             [0.08978195, 0.13015094],
         ]
     )
-    n_epochs = 10
-    batch_size = 10
+    n_epochs = 25
+    batch_size = 4
+    images_to_log = 5
+    dataset_len = 100
 
     net, anchors = train(
         img_dir,
         lbl_dir,
-        len_lim=200,
+        len_lim=dataset_len,
         n_epochs=n_epochs,
-        anchors=anchors,
+        n_anchors=n_anchors,
         batch_size=batch_size,
-        img_samples=10,
+        img_samples=images_to_log,
         quantized=False,
         loss_fnc="yolo",
+        export_testset=False,
     )
 
-    for bits in range(3, 9):
-        train(
-            img_dir,
-            lbl_dir,
-            len_lim=200,
-            weight_bit_width=bits - 2,
-            act_bit_width=bits,
-            n_epochs=n_epochs,
-            anchors=anchors,
-            batch_size=batch_size,
-            img_samples=10,
-            quantized=True,
-            loss_fnc="yolo",
-        )
-        train(
-            img_dir,
-            lbl_dir,
-            len_lim=200,
-            weight_bit_width=bits - 1,
-            act_bit_width=bits,
-            n_epochs=n_epochs,
-            anchors=anchors,
-            batch_size=batch_size,
-            img_samples=10,
-            quantized=True,
-            loss_fnc="yolo",
-        )
-        train(
-            img_dir,
-            lbl_dir,
-            len_lim=200,
-            weight_bit_width=bits,
-            act_bit_width=bits,
-            n_epochs=n_epochs,
-            anchors=anchors,
-            batch_size=batch_size,
-            img_samples=10,
-            quantized=True,
-            loss_fnc="yolo",
-        )
+    # for bits in range(3, 9):
+    #     train(
+    #         img_dir,
+    #         lbl_dir,
+    #         len_lim=dataset_len,
+    #         weight_bit_width=int(bits // 2),
+    #         act_bit_width=bits,
+    #         n_epochs=n_epochs,
+    #         anchors=anchors,
+    #         batch_size=batch_size,
+    #         img_samples=images_to_log,
+    #         quantized=True,
+    #         loss_fnc="yolo",
+    #     )
+    #     train(
+    #         img_dir,
+    #         lbl_dir,
+    #         len_lim=dataset_len,
+    #         weight_bit_width=bits,
+    #         act_bit_width=bits,
+    #         n_epochs=n_epochs,
+    #         anchors=anchors,
+    #         batch_size=batch_size,
+    #         img_samples=images_to_log,
+    #         quantized=True,
+    #         loss_fnc="yolo",
+    #     )
