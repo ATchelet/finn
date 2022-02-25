@@ -32,7 +32,7 @@ for path, subdirs, files in os.walk(data_dir):
                 b_y = ((ymax + ymin + 280) / 2) / height
                 b_w = (xmax - xmin) / width
                 b_h = (ymax - ymin) / height
-                f = open(os.path.join(out_dir, "labels", f"{dir}_{i:07d}.txt"), "a")
+                f = open(os.path.join(out_dir, "labels", f"{dir}_{i:07d}.txt"), "w")
                 f.write(f"{dir}_{i:07d}\n{b_x:.8f}\t{b_y:.8f}\t{b_w:.8f}\t{b_h:.8f}\n")
                 f.close()
                 i += 1
