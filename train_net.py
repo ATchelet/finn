@@ -68,14 +68,13 @@ gy = torch.tensor(0.0)
 
 class YOLO_dataset(Dataset):
     def __init__(
-        self, img_dir, lbl_dir, len_lim=-1, transform=None, grid_size=GRID_SIZE
+        self, img_dir, lbl_dir, len_lim=-1, transform=None
     ):
         self.img_dir = img_dir
         self.imgs = sorted(os.listdir(self.img_dir))[:len_lim]
         self.lbl_dir = lbl_dir
         self.lbls = sorted(os.listdir(self.lbl_dir))[:len_lim]
         self.transform = transform
-        self.grid_size = grid_size
 
     def __len__(self):
         return len(self.imgs)
@@ -798,7 +797,8 @@ def getXYminmax(pred_, label_):
         ],
         1,
     ).view(1, 4)
-    return torch.stack([pred, label], 0).view(2, 4)
+    iou_print_bb = torch.zeros((1,4))
+    return torch.stack([pred, label, iou_print_bb], 0).view(3, 4)
 
 
 def set_grids_mats(n_anchors):
@@ -826,7 +826,10 @@ def exportTestset(testset, path):
     images = []
     os.makedirs(path, exist_ok=True)
     f = open(os.path.join(path, "testset_labels.txt"), "w")
-    for i, [img, lbl] in enumerate(testset):
+    for i, [img, lbl] in tqdm(enumerate(testset),
+                total=len(testset),
+                desc="testset export",
+                unit="images",):
         img = np.array(ToPILImage()((img + 1.0) / 2.0))
         # io.imsave(os.path.join(path, "images", f"{i:09d}.jpg"), img)
         images.append(img)
@@ -851,7 +854,7 @@ def train(
     batch_size=1,
     lr_start=1 * 10 ** -4,
     lr_end=1 * 10 ** -6,
-    lr_max=2 * 10 ** -3,
+    lr_max=1 * 10 ** -3,
     len_lim=-1,
     img_samples=6,
     loss_fnc="yolo",
@@ -864,6 +867,11 @@ def train(
         QUANT_TENSOR = False
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # send macros to device
+    global INPUT_SHP, LBL_COEF
+    INPUT_SHP = INPUT_SHP.to(device)
+    LBL_COEF = LBL_COEF.to(device)
 
     if torch.is_tensor(anchors):
         n_anchors = anchors.size(0)
@@ -941,7 +949,7 @@ def train(
             max_lr=lr_max,
             total_steps=n_epochs * len(train_loader),
             anneal_strategy="cos",
-            pct_start=0.3,
+            pct_start=0.2,
             div_factor=lr_max / lr_start,
             final_div_factor=lr_start / lr_end,
         )
@@ -1077,11 +1085,12 @@ def train(
                     )
                 else:
                     train_smp_bbout = YOLOout(train_smp_out, anchors, device, True)
+                iou = (IoU_calc(train_smp_bbout, train_smp_lbl).squeeze()).numpy()
                 logger.add_image_with_boxes(
                     f"TrainingResults/img_{n}",
                     (train_smp_img + 1.0) / 2.0,
                     getXYminmax(train_smp_bbout, train_smp_lbl),
-                    labels=["prediction", "true"],
+                    labels=["prediction", "true", str(iou)],
                     global_step=epoch,
                     dataformats="NCHW",
                 )
@@ -1101,11 +1110,12 @@ def train(
                     )
                 else:
                     valid_smp_bbout = YOLOout(valid_smp_out, anchors, device, True)
+                iou = (IoU_calc(valid_smp_bbout, valid_smp_lbl).squeeze()).numpy()
                 logger.add_image_with_boxes(
                     f"ValidationResults/img_{n}",
                     (valid_smp_img + 1.0) / 2.0,
                     getXYminmax(valid_smp_bbout, valid_smp_lbl),
-                    labels=["prediction", "true"],
+                    labels=["prediction", "true", str(iou)],
                     global_step=epoch,
                     dataformats="NCHW",
                 )
@@ -1155,10 +1165,10 @@ if __name__ == "__main__":
 
     if weight_bit_width == 0 or act_bit_width == 0:
         quantized = False
-        export_testset = True
+        # export_testset = True
     else:
         quantized = True
-        export_testset = False
+        # export_testset = False
 
     # anchors = torch.tensor([[0.17775965, 0.12690470],
     #                         [0.11733948, 0.24617620],
@@ -1167,11 +1177,11 @@ if __name__ == "__main__":
     #                         [0.06502857, 0.14770794]])
     anchors = torch.tensor(
         [
-            [0.08978195, 0.13015094],
-            [0.08978195, 0.13015094],
-            [0.08978195, 0.13015094],
-            [0.08978195, 0.13015094],
-            [0.08978195, 0.13015094],
+            [ 0.05757873,  0.08779122],
+            [ 0.05757873,  0.08779122],
+            [ 0.05757873,  0.08779122],
+            [ 0.05757873,  0.08779122],
+            [ 0.05757873,  0.08779122],
         ]
     )
 
@@ -1181,12 +1191,12 @@ if __name__ == "__main__":
         weight_bit_width=weight_bit_width,
         act_bit_width=act_bit_width,
         n_epochs=n_epochs,
-        n_anchors=n_anchors,
+        anchors=anchors,
         batch_size=batch_size,
         len_lim=-1,
         img_samples=9,
         loss_fnc="yolo",
         quantized=quantized,
-        export_testset=export_testset,
+        export_testset=False,
     )
 
