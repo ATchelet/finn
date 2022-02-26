@@ -32,10 +32,12 @@ from brevitas.inject.defaults import *
 from brevitas.core.restrict_val import RestrictValueType
 from brevitas.onnx import export_brevitas_onnx as exportONNX
 
+# ------------------------------------------------------------------------------------------------------------------------------------------------ #
 
 #############################################
 #               Configurations              #
 #############################################
+
 
 # size of output layer
 # bb_x, bb_y, bb_w, bb_h, bb_conf
@@ -65,14 +67,13 @@ gy = torch.tensor(0.0)
 
 class YOLO_dataset(Dataset):
     def __init__(
-        self, img_dir, lbl_dir, len_lim=-1, transform=None, grid_size=GRID_SIZE
+        self, img_dir, lbl_dir, len_lim=-1, transform=None
     ):
         self.img_dir = img_dir
         self.imgs = sorted(os.listdir(self.img_dir))[:len_lim]
         self.lbl_dir = lbl_dir
         self.lbls = sorted(os.listdir(self.lbl_dir))[:len_lim]
         self.transform = transform
-        self.grid_size = grid_size
 
     def __len__(self):
         return len(self.imgs)
@@ -759,7 +760,7 @@ def AssessBBDiffs(pred, label):
     return [CentDist, SizeRatio]
 
 
-def getXYminmax(pred_, label_):
+def getXYminmax(pred_, label_, device):
     label = label_ * LBL_COEF
     label = torch.stack(
         [
@@ -795,7 +796,8 @@ def getXYminmax(pred_, label_):
         ],
         1,
     ).view(1, 4)
-    return torch.stack([pred, label], 0).view(2, 4)
+    iou_print_bb = torch.tensor([0, 0, 90, 15], device=device).view(1,4)
+    return torch.stack([pred, label, iou_print_bb], 0).view(3, 4)
 
 
 def set_grids_mats(n_anchors):
@@ -823,7 +825,10 @@ def exportTestset(testset, path):
     images = []
     os.makedirs(path, exist_ok=True)
     f = open(os.path.join(path, "testset_labels.txt"), "w")
-    for i, [img, lbl] in enumerate(testset):
+    for i, [img, lbl] in tqdm(enumerate(testset),
+                total=len(testset),
+                desc="testset export",
+                unit="images",):
         img = np.array(ToPILImage()((img + 1.0) / 2.0))
         # io.imsave(os.path.join(path, "images", f"{i:09d}.jpg"), img)
         images.append(img)
@@ -848,7 +853,7 @@ def train(
     batch_size=1,
     lr_start=1 * 10 ** -4,
     lr_end=1 * 10 ** -6,
-    lr_max=2 * 10 ** -3,
+    lr_max=1 * 10 ** -3,
     len_lim=-1,
     img_samples=6,
     loss_fnc="yolo",
@@ -861,6 +866,11 @@ def train(
         QUANT_TENSOR = False
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # send macros to device
+    global INPUT_SHP, LBL_COEF
+    INPUT_SHP = INPUT_SHP.to(device)
+    LBL_COEF = LBL_COEF.to(device)
 
     if torch.is_tensor(anchors):
         n_anchors = anchors.size(0)
@@ -938,7 +948,7 @@ def train(
             max_lr=lr_max,
             total_steps=n_epochs * len(train_loader),
             anneal_strategy="cos",
-            pct_start=0.3,
+            pct_start=0.2,
             div_factor=lr_max / lr_start,
             final_div_factor=lr_start / lr_end,
         )
@@ -1029,15 +1039,15 @@ def train(
                     t_loss = loss_func(
                         valid_outputs.value.float(), valid_labels.float(), False
                     )
-                    bb_outputs = YOLOout(outputs.value, anchors, device, True)
+                    bb_outputs = YOLOout(valid_outputs.value, anchors, device, True)
                 else:
                     t_loss = loss_func(
                         valid_outputs.float(), valid_labels.float(), False
                     )
-                    bb_outputs = YOLOout(outputs, anchors, device, True)
-                iou = IoU_calc(bb_outputs, labels)
-                ctrDist, ratio = AssessBBDiffs(bb_outputs, labels)
-                valid_total += labels.size(0)
+                    bb_outputs = YOLOout(valid_outputs, anchors, device, True)
+                iou = IoU_calc(bb_outputs, valid_labels)
+                ctrDist, ratio = AssessBBDiffs(bb_outputs, valid_labels)
+                valid_total += valid_labels.size(0)
                 valid_loss += t_loss.item()
                 valid_miou += iou.sum()
                 valid_AP50 += (iou >= 0.5).sum()
@@ -1074,11 +1084,12 @@ def train(
                     )
                 else:
                     train_smp_bbout = YOLOout(train_smp_out, anchors, device, True)
+                iou = (IoU_calc(train_smp_bbout, train_smp_lbl).squeeze()).cpu().numpy()
                 logger.add_image_with_boxes(
                     f"TrainingResults/img_{n}",
                     (train_smp_img + 1.0) / 2.0,
-                    getXYminmax(train_smp_bbout, train_smp_lbl),
-                    labels=["prediction", "true"],
+                    getXYminmax(train_smp_bbout, train_smp_lbl, device),
+                    labels=["prediction", "true",  f"iou: {iou:.8f}"],
                     global_step=epoch,
                     dataformats="NCHW",
                 )
@@ -1098,11 +1109,12 @@ def train(
                     )
                 else:
                     valid_smp_bbout = YOLOout(valid_smp_out, anchors, device, True)
+                iou = (IoU_calc(valid_smp_bbout, valid_smp_lbl).squeeze()).cpu().numpy()
                 logger.add_image_with_boxes(
                     f"ValidationResults/img_{n}",
                     (valid_smp_img + 1.0) / 2.0,
-                    getXYminmax(valid_smp_bbout, valid_smp_lbl),
-                    labels=["prediction", "true"],
+                    getXYminmax(valid_smp_bbout, valid_smp_lbl, device),
+                    labels=["prediction", "true", f"iou: {iou:.8f}"],
                     global_step=epoch,
                     dataformats="NCHW",
                 )
@@ -1135,9 +1147,13 @@ def train(
         f.write(f"{anchor[0]: .8f}, {anchor[1]: .8f}\n")
     f.close()
 
+    if device=="cuda":
+        torch.cuda.empty_cache()
+
     return [net, anchors]
 
 
+# ------------------------------------------------------------------------------------------------------------------------------------------------ #
 if __name__ == "__main__":
 
     img_dir = "./Dataset/images"
@@ -1150,11 +1166,11 @@ if __name__ == "__main__":
     #                         [0.06502857, 0.14770794]])
     anchors = torch.tensor(
         [
-            [0.08978195, 0.13015094],
-            [0.08978195, 0.13015094],
-            [0.08978195, 0.13015094],
-            [0.08978195, 0.13015094],
-            [0.08978195, 0.13015094],
+            [ 0.05757873,  0.08779122],
+            [ 0.05757873,  0.08779122],
+            [ 0.05757873,  0.08779122],
+            [ 0.05757873,  0.08779122],
+            [ 0.05757873,  0.08779122],
         ]
     )
     n_epochs = 10

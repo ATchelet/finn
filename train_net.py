@@ -761,7 +761,7 @@ def AssessBBDiffs(pred, label):
     return [CentDist, SizeRatio]
 
 
-def getXYminmax(pred_, label_):
+def getXYminmax(pred_, label_, device):
     label = label_ * LBL_COEF
     label = torch.stack(
         [
@@ -797,7 +797,7 @@ def getXYminmax(pred_, label_):
         ],
         1,
     ).view(1, 4)
-    iou_print_bb = torch.zeros((1,4))
+    iou_print_bb = torch.tensor([0, 0, 90, 15], device=device).view(1,4)
     return torch.stack([pred, label, iou_print_bb], 0).view(3, 4)
 
 
@@ -1040,15 +1040,15 @@ def train(
                     t_loss = loss_func(
                         valid_outputs.value.float(), valid_labels.float(), False
                     )
-                    bb_outputs = YOLOout(outputs.value, anchors, device, True)
+                    bb_outputs = YOLOout(valid_outputs.value, anchors, device, True)
                 else:
                     t_loss = loss_func(
                         valid_outputs.float(), valid_labels.float(), False
                     )
-                    bb_outputs = YOLOout(outputs, anchors, device, True)
-                iou = IoU_calc(bb_outputs, labels)
-                ctrDist, ratio = AssessBBDiffs(bb_outputs, labels)
-                valid_total += labels.size(0)
+                    bb_outputs = YOLOout(valid_outputs, anchors, device, True)
+                iou = IoU_calc(bb_outputs, valid_labels)
+                ctrDist, ratio = AssessBBDiffs(bb_outputs, valid_labels)
+                valid_total += valid_labels.size(0)
                 valid_loss += t_loss.item()
                 valid_miou += iou.sum()
                 valid_AP50 += (iou >= 0.5).sum()
@@ -1085,12 +1085,12 @@ def train(
                     )
                 else:
                     train_smp_bbout = YOLOout(train_smp_out, anchors, device, True)
-                iou = (IoU_calc(train_smp_bbout, train_smp_lbl).squeeze()).numpy()
+                iou = (IoU_calc(train_smp_bbout, train_smp_lbl).squeeze()).cpu().numpy()
                 logger.add_image_with_boxes(
                     f"TrainingResults/img_{n}",
                     (train_smp_img + 1.0) / 2.0,
-                    getXYminmax(train_smp_bbout, train_smp_lbl),
-                    labels=["prediction", "true", str(iou)],
+                    getXYminmax(train_smp_bbout, train_smp_lbl, device),
+                    labels=["prediction", "true",  f"iou: {iou:.8f}"],
                     global_step=epoch,
                     dataformats="NCHW",
                 )
@@ -1110,12 +1110,12 @@ def train(
                     )
                 else:
                     valid_smp_bbout = YOLOout(valid_smp_out, anchors, device, True)
-                iou = (IoU_calc(valid_smp_bbout, valid_smp_lbl).squeeze()).numpy()
+                iou = (IoU_calc(valid_smp_bbout, valid_smp_lbl).squeeze()).cpu().numpy()
                 logger.add_image_with_boxes(
                     f"ValidationResults/img_{n}",
                     (valid_smp_img + 1.0) / 2.0,
-                    getXYminmax(valid_smp_bbout, valid_smp_lbl),
-                    labels=["prediction", "true", str(iou)],
+                    getXYminmax(valid_smp_bbout, valid_smp_lbl, device),
+                    labels=["prediction", "true", f"iou: {iou:.8f}"],
                     global_step=epoch,
                     dataformats="NCHW",
                 )
@@ -1148,6 +1148,9 @@ def train(
         f.write(f"{anchor[0]: .8f}, {anchor[1]: .8f}\n")
     f.close()
 
+    if device=="cuda":
+        torch.cuda.empty_cache()
+
     return [net, anchors]
 
 
@@ -1163,12 +1166,12 @@ if __name__ == "__main__":
     n_epochs = int(sys.argv[-2])
     batch_size = int(sys.argv[-1])
 
+    export_testset = False
     if weight_bit_width == 0 or act_bit_width == 0:
         quantized = False
         # export_testset = True
     else:
         quantized = True
-        # export_testset = False
 
     # anchors = torch.tensor([[0.17775965, 0.12690470],
     #                         [0.11733948, 0.24617620],
@@ -1197,6 +1200,6 @@ if __name__ == "__main__":
         img_samples=9,
         loss_fnc="yolo",
         quantized=quantized,
-        export_testset=False,
+        export_testset=export_testset,
     )
 

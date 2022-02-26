@@ -15,8 +15,8 @@ cd /home/atchelet/git/finn/
 # cd /home/atchelet/git/finn_at/finn_at/finn_at
 
 # train_net.py IMAGES_DIR LABELS_DIR WEIGHT_BIT ACTIVATION_BIT NUM_ANCHORS NUM_EPOCHS BATCH_SIZE
-echo "Start training - PyTorch"
-time python3 ./train_net.py $IMG_DIR $LBL_DIR 0 0 5 40 100
+echo "Start training - W1A3"
+time python3 ./train_net.py $IMG_DIR $LBL_DIR 1 3 5 80 100
 echo "finished!"
 
 end_date=$(date)
