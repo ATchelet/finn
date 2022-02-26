@@ -16,7 +16,7 @@ cd /home/atchelet/git/finn/
 
 # train_net.py IMAGES_DIR LABELS_DIR WEIGHT_BIT ACTIVATION_BIT NUM_ANCHORS NUM_EPOCHS BATCH_SIZE
 echo "Start training - W4A4"
-time python3 ./train_net.py $IMG_DIR $LBL_DIR 4 4 5 80 100
+time python3 ./train_net.py $IMG_DIR $LBL_DIR 4 4 5 80 32
 echo "finished!"
 
 end_date=$(date)
