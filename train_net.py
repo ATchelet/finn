@@ -820,12 +820,13 @@ def set_grids_mats(n_anchors):
         ).view(GRID_SIZE.prod(), n_anchors)
 
 
-def exportTestset(testset, path):
+def exportTestset(testset, path, batche_size):
     from torchvision.transforms import ToPILImage
 
     images = []
+    labels = ""
+    n = 0
     os.makedirs(path, exist_ok=True)
-    f = open(os.path.join(path, "testset_labels.txt"), "w")
     for i, [img, lbl] in tqdm(enumerate(testset),
                 total=len(testset),
                 desc="testset export",
@@ -833,9 +834,26 @@ def exportTestset(testset, path):
         img = np.array(ToPILImage()((img + 1.0) / 2.0))
         # io.imsave(os.path.join(path, "images", f"{i:09d}.jpg"), img)
         images.append(img)
+        labels += f"{lbl[0]:.8f}\t{lbl[1]:.8f}\t{lbl[2]:.8f}\t{lbl[3]:.8f}\n"
+        if (i%batche_size) == (batche_size-1):
+            # store images batch npz
+            np.savez(os.path.join(path, f"testset_images_{n}.npz"), images)
+            # store labels batch
+            f = open(os.path.join(path, f"testset_labels_{n}.txt"), "w")
+            f.write(f"{lbl[0]:.8f}\t{lbl[1]:.8f}\t{lbl[2]:.8f}\t{lbl[3]:.8f}\n")
+            f.close()
+            # clear data buffers and progress batch counter
+            images = []
+            labels = ""
+            n += 1
+    # batch leftover data to files
+    if images:
+        # store images batch npz
+        np.savez(os.path.join(path, f"testset_images_{n}.npz"), images)
+        # store labels batch
+        f = open(os.path.join(path, f"testset_labels_{n}.txt"), "w")
         f.write(f"{lbl[0]:.8f}\t{lbl[1]:.8f}\t{lbl[2]:.8f}\t{lbl[3]:.8f}\n")
-    f.close()
-    np.savez(os.path.join(path, "testset_images.npz"), images)
+        f.close()
 
 
 #############################################
@@ -911,7 +929,7 @@ def train(
     valid_set = Subset(dataset, valid_idx)
     test_set = Subset(dataset, test_idx)
     if export_testset:
-        exportTestset(test_set, "./Testset/")
+        exportTestset(test_set, "./Testset/", 200)
     train_loader = DataLoader(
         train_set, batch_size=batch_size, shuffle=True, num_workers=4
     )
@@ -934,8 +952,8 @@ def train(
         net = QTinyYOLOv2(n_anchors, weight_bit_width, act_bit_width)
     else:
         net = TinyYOLOv2(n_anchors)
-    if torch.cuda.device_count() > 1:
-        net = DataParallel(net)
+        if torch.cuda.device_count() > 1:
+            net = DataParallel(net)
     net = net.to(device)
     loss_func = YOLOLoss(anchors, device, loss_fnc=loss_fnc)
     optimizer = torch.optim.Adam(net.parameters(), lr=lr_start, weight_decay=1e-4)
@@ -1125,6 +1143,7 @@ def train(
 
     # export network ONNX
     if quantized:
+        INPUT_SHP = INPUT_SHP.cpu()
         net.eval()
         onnx_path = f"./train_out/trained_net_W{weight_bit_width}A{act_bit_width}_a{n_anchors}.onnx"
         exportONNX(net, (1, 3, INPUT_SHP[0], INPUT_SHP[1]), onnx_path)
