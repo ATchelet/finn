@@ -931,13 +931,13 @@ def train(
     if export_testset:
         exportTestset(test_set, "./Testset/", 200)
     train_loader = DataLoader(
-        train_set, batch_size=batch_size, shuffle=True, num_workers=4
+        train_set, batch_size=batch_size, shuffle=True, num_workers=8
     )
     valid_loader = DataLoader(
-        valid_set, batch_size=batch_size, shuffle=True, num_workers=4
+        valid_set, batch_size=batch_size, shuffle=True, num_workers=8
     )
     test_loader = DataLoader(
-        test_set, batch_size=batch_size, shuffle=True, num_workers=4
+        test_set, batch_size=batch_size, shuffle=True, num_workers=8
     )
 
     # get anchors
@@ -1146,7 +1146,7 @@ def train(
         INPUT_SHP = INPUT_SHP.cpu()
         net.eval()
         onnx_path = f"./train_out/trained_net_W{weight_bit_width}A{act_bit_width}_a{n_anchors}.onnx"
-        exportONNX(net, (1, 3, INPUT_SHP[0], INPUT_SHP[1]), onnx_path)
+        exportONNX(net.cpu(), (1, 3, INPUT_SHP[0], INPUT_SHP[1]), onnx_path)
 
     # save network
     if quantized:

@@ -15,7 +15,7 @@ gy = np.arange(GRID_SIZE[0]).repeat(GRID_SIZE[1])
 def load_data(path, bsize=100):
     # load images
     images = np.load(path + "testset_images.npz")
-    images = ((images / 255.0) - 0.5) * 2.0
+    # images = ((images / 255.0) - 0.5) * 2.0
     # load labels
     labels = np.array([]).reshape(0, 4)
     with open(path + "testset_labels.txt") as f:
