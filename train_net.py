@@ -820,11 +820,12 @@ def set_grids_mats(n_anchors):
         ).view(GRID_SIZE.prod(), n_anchors)
 
 
-def exportTestset(testset, path, batche_size):
+def exportTestset(testset, path, batch_size):
     from torchvision.transforms import ToPILImage
-
+    if os.path.exists(path):
+        shutil.rmtree(path)
     images = []
-    labels = ""
+    labels = []
     n = 0
     os.makedirs(path, exist_ok=True)
     for i, [img, lbl] in tqdm(enumerate(testset),
@@ -832,29 +833,20 @@ def exportTestset(testset, path, batche_size):
                 desc="testset export",
                 unit="images",):
         img = np.array(ToPILImage()((img + 1.0) / 2.0))
-        # io.imsave(os.path.join(path, "images", f"{i:09d}.jpg"), img)
         images.append(img)
-        labels += f"{lbl[0]:.8f}\t{lbl[1]:.8f}\t{lbl[2]:.8f}\t{lbl[3]:.8f}\n"
-        if (i%batche_size) == (batche_size-1):
-            # store images batch npz
-            np.savez(os.path.join(path, f"testset_images_{n}.npz"), images)
-            # store labels batch
-            f = open(os.path.join(path, f"testset_labels_{n}.txt"), "w")
-            f.write(f"{lbl[0]:.8f}\t{lbl[1]:.8f}\t{lbl[2]:.8f}\t{lbl[3]:.8f}\n")
-            f.close()
+        labels.append(lbl.numpy())
+        if (i%batch_size) == (batch_size-1):
+            # store data 
+            np.savez(os.path.join(path, f"testset_images_{n}.npz"), images=images, labels=labels)
             # clear data buffers and progress batch counter
             images = []
-            labels = ""
+            labels = []
             n += 1
     # batch leftover data to files
     if images:
         # store images batch npz
-        np.savez(os.path.join(path, f"testset_images_{n}.npz"), images)
-        # store labels batch
-        f = open(os.path.join(path, f"testset_labels_{n}.txt"), "w")
-        f.write(f"{lbl[0]:.8f}\t{lbl[1]:.8f}\t{lbl[2]:.8f}\t{lbl[3]:.8f}\n")
-        f.close()
-
+        np.savez(os.path.join(path, f"testset_images_{n}.npz"), images=images, labels=labels)
+        
 
 #############################################
 #               Training                    #
