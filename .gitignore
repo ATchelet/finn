@@ -98,6 +98,5 @@ notebooks/MScThesis/data/*
 /gdrive-key/
 
 # generated files as part of end2end notebooks
-*.onnx
 notebooks/runs
 runs
